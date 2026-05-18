@@ -1,9 +1,9 @@
 {
-  "draw_number": "?",
-  "spade": "?",
-  "heart": "?",
-  "diamond": "?",
-  "club": "?",
-  "confidence": "?",
-  "updated": "2026-05-18"
+  "draw_number": "TEST",
+  "spade": "A",
+  "heart": "Q",
+  "diamond": "A",
+  "club": "8",
+  "confidence": "68%",
+  "updated": "2026-05-18 12:30"
 }
