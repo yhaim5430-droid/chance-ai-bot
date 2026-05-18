@@ -1,9 +1,5 @@
 {
-  "draw_number": "TEST",
-  "spade": "A",
-  "heart": "Q",
-  "diamond": "A",
-  "club": "8",
-  "confidence": "68%",
-  "updated": "2026-05-18 12:30"
+  "draw": 52910,
+  "baseline": {"spade": "J", "heart": "8", "diamond": "10", "club": "Q"},
+  "mirror": {"spade": "9", "heart": "J", "diamond": "K", "club": "8"}
 }
