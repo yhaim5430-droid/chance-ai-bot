@@ -1,7 +1,9 @@
 import logging
 import os
 import json
+import threading
 import urllib.request
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -10,15 +12,28 @@ logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 OWNER_ID = 6775881845
+PORT = int(os.environ.get("PORT", 10000))
 
 GITHUB_RAW_URL = "https://raw.githubusercontent.com/yhaim5430-droid/chance-ai-bot/main/prediction_latest.json"
 
-# רשימת מנויים פעילים (user_id)
 PREMIUM_USERS = set()
-
-# מעקב חיזוי חינם יומי — {user_id: "YYYY-MM-DD"}
 FREE_PRED_USED = {}
 
+# ========== שרת HTTP קטן כדי ש-Render לא יסגור ==========
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Chance Bot is running!")
+    def log_message(self, format, *args):
+        pass  # שקט בלוגים
+
+def run_health_server():
+    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+    logging.info(f"Health server running on port {PORT}")
+    server.serve_forever()
+
+# ========== תפריט ==========
 def main_menu(premium=False):
     keyboard = [
         ["⭐ המלצה חינם", "🎰 10 הגרלות אחרונות"],
@@ -32,21 +47,18 @@ def is_premium(user_id):
     return user_id in PREMIUM_USERS or user_id == OWNER_ID
 
 def get_prediction_from_github():
-    """
-    קורא את החיזוי האחרון מ-GitHub JSON — חינם לחלוטין!
-    """
     try:
         req = urllib.request.Request(
             GITHUB_RAW_URL,
             headers={"Cache-Control": "no-cache", "User-Agent": "ChanceBot/1.0"}
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-            return data
+            return json.loads(resp.read())
     except Exception as e:
         logging.error(f"שגיאה בקריאת GitHub: {e}")
         return None
 
+# ========== הנדלרים ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     name = update.effective_user.first_name or "חבר"
@@ -80,7 +92,6 @@ async def handle_free_prediction(update: Update, context: ContextTypes.DEFAULT_T
     user_id = update.effective_user.id
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # בדוק אם כבר השתמש היום
     if FREE_PRED_USED.get(user_id) == today and user_id != OWNER_ID:
         await update.message.reply_html(
             "⭐ <b>המלצה חינם</b>\n\n"
@@ -90,31 +101,20 @@ async def handle_free_prediction(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # סמן שהשתמש היום
     FREE_PRED_USED[user_id] = today
-
-    # קרא חיזוי מ-GitHub
     pred = get_prediction_from_github()
 
     if pred and pred.get("draw_number", "?") != "?":
-        draw_num = pred.get("draw_number", "?")
-        spade   = pred.get("spade", "?")
-        heart   = pred.get("heart", "?")
-        diamond = pred.get("diamond", "?")
-        club    = pred.get("club", "?")
-        conf    = pred.get("confidence", "?")
-        updated = pred.get("updated", "")
-
         await update.message.reply_html(
             f"⭐ <b>חיזוי חינם יומי</b>\n"
             f"<i>Baseline — ללא ניתוח מועצה</i>\n\n"
-            f"🎯 הגרלה מס' <b>{draw_num}</b>\n\n"
-            f"♠️ עלה:   <b>{spade}</b>\n"
-            f"❤️ לב:    <b>{heart}</b>\n"
-            f"♦️ יהלום: <b>{diamond}</b>\n"
-            f"♣️ תלתן:  <b>{club}</b>\n\n"
-            f"📊 ביטחון: <b>{conf}</b>\n"
-            f"🕐 עודכן: {updated}\n\n"
+            f"🎯 הגרלה מס' <b>{pred.get('draw_number','?')}</b>\n\n"
+            f"♠️ עלה:   <b>{pred.get('spade','?')}</b>\n"
+            f"❤️ לב:    <b>{pred.get('heart','?')}</b>\n"
+            f"♦️ יהלום: <b>{pred.get('diamond','?')}</b>\n"
+            f"♣️ תלתן:  <b>{pred.get('club','?')}</b>\n\n"
+            f"📊 ביטחון: <b>{pred.get('confidence','?')}</b>\n"
+            f"🕐 עודכן: {pred.get('updated','')}\n\n"
             f"🔒 לחיזוי מלא + ניתוח מועצה לפני <b>כל הגרלה</b>\n"
             f"שדרג ל-👑 פרמיום!"
         )
@@ -127,7 +127,6 @@ async def handle_free_prediction(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_last_10(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
     if not is_premium(user_id):
         await update.message.reply_html(
             "🎰 <b>10 הגרלות האחרונות</b>\n\n"
@@ -136,20 +135,19 @@ async def handle_last_10(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # קרא מ-GitHub
     pred = get_prediction_from_github()
     if pred:
         await update.message.reply_html(
-            f"🎰 <b>הגרלה אחרונה</b>\n\n"
-            f"🔹 <b>#{pred.get('draw_number','?')}</b>  "
-            f"♠️{pred.get('spade','?')}  "
-            f"❤️{pred.get('heart','?')}  "
-            f"♦️{pred.get('diamond','?')}  "
-            f"♣️{pred.get('club','?')}\n\n"
+            f"🎰 <b>חיזוי אחרון</b>\n\n"
+            f"🔹 <b>#{pred.get('draw_number','?')}</b>\n"
+            f"♠️ עלה: {pred.get('spade','?')}\n"
+            f"❤️ לב: {pred.get('heart','?')}\n"
+            f"♦️ יהלום: {pred.get('diamond','?')}\n"
+            f"♣️ תלתן: {pred.get('club','?')}\n\n"
             f"<i>נתונים נוספים בקרוב...</i>"
         )
     else:
-        await update.message.reply_html("❌ לא ניתן לטעון נתונים כרגע. נסה שוב מאוחר יותר.")
+        await update.message.reply_html("❌ לא ניתן לטעון נתונים כרגע.")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -236,7 +234,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
         reply_markup=keyboard
     )
-
     await update.message.reply_html(
         "✅ <b>תודה! ההוכחה התקבלה.</b>\n"
         "המנוי יופעל תוך 24 שעות לאחר אישור 🎉"
@@ -288,18 +285,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu(premium)
         )
 
+# ========== הפעלה ==========
 def main():
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN לא מוגדר!")
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    # הפעל את שרת ה-HTTP בthread נפרד
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
+    logging.info("Health server thread started")
 
+    app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    logging.info("🤖 בוט מופעל...")
+    logging.info("🤖 בוט מופעל עם HTTP health server!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
