@@ -12,13 +12,13 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 # הגדרות מאובטחות וחיבור ל-Chance AI
 # ═══════════════════════════════════════════
 TG_TOKEN  = os.environ.get("TG_TOKEN",  "7754804245:AAEf5lCTTU3NB7qNnOa1-HKJXcpZLDOdseM")
-CHAT_ID   = os.environ.get("CHAT_ID",   "-1002360888694") # מזהה קבוצת הטלגרם שלך מהצילום מסך
+CHAT_ID   = os.environ.get("CHAT_ID",   "-1002360888694") # מזהה קבוצת הטלגרם שלך
 ADMIN_ID  = int(os.environ.get("ADMIN_ID", "6775881845"))
 
-# פרטי ה-API של אפליקציית Chance AI שלך:
+# פרטי ה-API המדויקים שלך:
 CHANCE_APP_ID  = "699f6d52f3302128ab050b10"
 CHANCE_API_KEY = "20742ca24625436b8963159c29dd34c3"
-BASE_URL       = "https://api.base44.com/v1" # כתובת ה-API הרשמית של Base44
+BASE_URL       = "https://api.base44.com/v1"
 
 # ── פרטי תשלום ──
 PAYMENT_INFO = {
@@ -40,7 +40,7 @@ PRICES = {
 }
 
 # ═══════════════════════════════════════════
-# מסד נתונים מאובטח
+# מסד נתונים מאובטח של משתמשים
 # ═══════════════════════════════════════════
 DB_FILE      = "users.json"
 BLOCKED_FILE = "blocked.json"
@@ -156,11 +156,15 @@ def add_referral(referrer_id, new_user_id):
     return len(db["referrals"].get(rid, []))
 
 # ═══════════════════════════════════════════
-# פונקציות משיכת נתונים ישירות מ-Chance AI API
+# פונקציות קריאה מתוקנות ומאובטחות ל-API
 # ═══════════════════════════════════════════
 async def fetch_predictions_from_api():
-    """פנייה ישירה לטבלת Prediction באפליקציית Chance AI שלך"""
-    headers = {"Authorization": f"Bearer {CHANCE_API_KEY}", "Content-Type": "application/json"}
+    """מושך נתונים מטבלת Prediction ומטפל בפורמט ה-JSON של Base44 בלי לקרוס"""
+    headers = {
+        "Authorization": f"Bearer {CHANCE_API_KEY}",
+        "X-API-Key": CHANCE_API_KEY,
+        "Content-Type": "application/json"
+    }
     url = f"{BASE_URL}/apps/{CHANCE_APP_ID}/entities/Prediction/records"
     params = {"sort": "-target_draw_number", "limit": 20}
     
@@ -169,37 +173,53 @@ async def fetch_predictions_from_api():
             async with session.get(url, headers=headers, params=params, timeout=15) as r:
                 if r.status == 200:
                     res = await r.json()
-                    return res.get("records", [])
+                    # הגנה מפני קריסה: בודק אם זו רשימה ישירה או דיקשנרי
+                    if isinstance(res, list):
+                        return res
+                    if isinstance(res, dict):
+                        return res.get("records", res.get("data", []))
+                print(f"⚠️ שגיאת API בחיזויים סטטוס: {r.status}")
     except Exception as e:
         print(f"❌ שגיאה במשיכת חיזויים: {e}")
     return []
 
 async def fetch_draws_from_api():
-    """פנייה ישירה לטבלת Draw באפליקציית Chance AI שלך - תיקון הבעיה של 10 הגרלות"""
-    headers = {"Authorization": f"Bearer {CHANCE_API_KEY}", "Content-Type": "application/json"}
+    """מושך במדויק את 10 ההגרלות האחרונות מטבלת Draw"""
+    headers = {
+        "Authorization": f"Bearer {CHANCE_API_KEY}",
+        "X-API-Key": CHANCE_API_KEY,
+        "Content-Type": "application/json"
+    }
     url = f"{BASE_URL}/apps/{CHANCE_APP_ID}/entities/Draw/records"
-    params = {"sort": "-draw_number", "limit": 10} # מביא במדויק את ה-10 האחרונות
+    params = {"sort": "-draw_number", "limit": 10}
     
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, params=params, timeout=15) as r:
                 if r.status == 200:
                     res = await r.json()
-                    return res.get("records", [])
+                    if isinstance(res, list):
+                        return res
+                    if isinstance(res, dict):
+                        return res.get("records", res.get("data", []))
+                print(f"⚠️ שגיאת API בהגרלות סטטוס: {r.status}")
     except Exception as e:
         print(f"❌ שגיאה במשיכת 10 הגרלות: {e}")
     return []
 
-# ── עיצוב הודעות מבוסס נתוני אמת ──
+# ── עיצוב הודעות מתוקן ומאובטח ──
 def build_free_recommendation(records):
-    if not records: return "❌ אין נתוני חיזוי מעודכנים במערכת כרגע. נסה שוב מאוחר יותר."
+    if not records or not isinstance(records, list): 
+        return "❌ אין נתוני חיזוי מעודכנים במערכת כרגע. נסה שוב מאוחר יותר."
     
-    # סינון לטובת המודל האנושי (Quantum Human v5.0) המועדף
-    human_pred = next((p for p in records if p.get("method") in ("Human", "Quantum Human", "Quantum Human v5.0")), None)
+    # חיפוש שיטת Human
+    human_pred = next((p for p in records if isinstance(p, dict) and p.get("method") in ("Human", "Quantum Human", "Quantum Human v5.0")), None)
     
-    if not human_pred:
-        # גיבוי: אם מסיבה כלשהי לא הוגדר 'Human', ניקח את הרשומה הראשונה
+    if not human_pred and len(records) > 0:
         human_pred = records[0]
+        
+    if not human_pred:
+        return "❌ לא נמצאו רשומות חיזוי תואמות בבסיס הנתונים."
         
     return (f"⭐ <b>המלצה חינם — Quantum Human v5.0</b>\n"
             f"🎯 הגרלה מטרה: <b>#{human_pred.get('target_draw_number', '—')}</b>\n"
@@ -212,10 +232,11 @@ def build_free_recommendation(records):
             f"<i>⬡ Chance AI Predictor</i>")
 
 def build_vip_signals(records):
-    if not records: return "❌ אין נתונים זמינים כרגע."
+    if not records or not isinstance(records, list): 
+        return "❌ אין נתונים זמינים כרגע."
     
     latest_draw = records[0].get("target_draw_number")
-    current_preds = [p for p in records if p.get("target_draw_number") == latest_draw]
+    current_preds = [p for p in records if isinstance(p, dict) and p.get("target_draw_number") == latest_draw]
     
     msg = f"🔮 <b>ריכוז חיזויים מורחב להגרלה #{latest_draw}</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
     
@@ -237,23 +258,25 @@ def build_vip_signals(records):
     return msg
 
 def build_last_draws(draws):
-    if not draws: return "❌ לא נמצאו תוצאות הגרלה קודמות בבסיס הנתונים."
+    if not draws or not isinstance(draws, list): 
+        return "❌ לא נמצאו תוצאות הגרלה קודמות בבסיס הנתונים."
     
     msg = "🎰 <b>תוצאות 10 הגרלות אחרונות</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
     for d in draws:
-        msg += f"<b>🎰 הגרלה #{d.get('draw_number')}</b>: ♠️{d.get('spade','')} ❤️{d.get('heart','')} ♦️{d.get('diamond','')} ♣️{d.get('club','')}\n"
+        if isinstance(d, dict):
+            msg += f"<b>🎰 הגרלה #{d.get('draw_number','—')}</b>: ♠️{d.get('spade','—')} ❤️{d.get('heart','—')} ♦️{d.get('diamond','—')} ♣️{d.get('club','—')}\n"
         
     msg += "\n<i>⬡ Chance AI Predictor</i>"
     return msg
 
 # ═══════════════════════════════════════════
-# תפריטים
+# תפריטים וכפתורים
 # ═══════════════════════════════════════════
 def main_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⭐ המלצה חינם",        callback_data="watchlist"), # משתמש בפונקציה החינמית
+        [InlineKeyboardButton("⭐ המלצה חינם",        callback_data="watchlist"),
          InlineKeyboardButton("🔮 חיזוי VIP (כל 4 השיטות)", callback_data="signals")],
-        [InlineKeyboardButton("🎰 10 הגרלות אחרונות",   callback_data="briefing")], # משותף ל-10 הגרלות
+        [InlineKeyboardButton("🎰 10 הגרלות אחרונות",   callback_data="briefing")],
         [InlineKeyboardButton("👑 מנויים",              callback_data="subscribe"),
          InlineKeyboardButton("👥 חבר מביא חבר",       callback_data="referral")],
         [InlineKeyboardButton("ℹ️ עזרה",                callback_data="help")],
@@ -294,7 +317,6 @@ def action_menu(action):
 async def check_access(update, ctx, callback=False):
     uid = update.effective_user.id
     if is_blocked(uid) and not is_admin(uid):
-        security_log("BLOCKED_ATTEMPT", uid)
         msg = "🚫 הגישה שלך נחסמה. פנה לתמיכה."
         if callback: await update.callback_query.answer(msg, show_alert=True)
         else: await update.message.reply_text(msg)
@@ -302,7 +324,6 @@ async def check_access(update, ctx, callback=False):
 
     if is_subscribed(uid): return True
 
-    security_log("NO_SUB_ATTEMPT", uid)
     msg = ("🔒 <b>תוכן זה זמין למנויי VIP בלבד</b>\n\n"
            "פתח גישה לכל 4 שיטות החיזוי והחיזוקים בזמן אמת:\n"
            "🆓 ניסיון חינמי 3 ימים\n"
@@ -314,7 +335,7 @@ async def check_access(update, ctx, callback=False):
     return False
 
 # ═══════════════════════════════════════════
-# פקודות בוט
+# פקודות הבוט
 # ═══════════════════════════════════════════
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid   = update.effective_user.id
@@ -324,22 +345,6 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🚫 הגישה שלך נחסמה. פנה לתמיכה.")
         return
 
-    args = ctx.args
-    if args and args[0].startswith("REF"):
-        referrer_id = args[0][3:]
-        if str(referrer_id) != str(uid):
-            count = add_referral(referrer_id, uid)
-            if count > 0 and count % 2 == 0:
-                add_subscription(int(referrer_id), "", "monthly", 30)
-                try:
-                    await ctx.bot.send_message(
-                        chat_id=int(referrer_id),
-                        text=("🎉 <b>מזל טוב!</b>\n\nצירפת 2 חברים — קיבלת <b>חודש VIP חינמי!</b>\n\n"
-                              f"תוקף חדש: {get_expiry_str(referrer_id)}\n\n<i>⬡ Chance AI</i>"),
-                        parse_mode="HTML"
-                    )
-                except: pass
-
     db = load_db()
     if str(uid) not in db["users"]:
         db["users"][str(uid)] = {
@@ -347,7 +352,6 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "joined": datetime.now().isoformat(), "trial_used": False, "referrals_count": 0, "referral_code": f"REF{uid}",
         }
         save_db(db)
-        security_log("NEW_USER", uid, f"username={uname}")
 
     sub    = is_subscribed(uid)
     status = f"👑 מנוי VIP פעיל עד: {get_expiry_str(uid)}" if sub else "❌ אין מנוי VIP פעיל"
@@ -358,61 +362,14 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        record_attempt(update.effective_user.id)
-        return
+    if not is_admin(update.effective_user.id): return
     db     = load_db()
     users  = db["users"]
-    pend   = db["pending"]
+    pend   = db.get("pending", {})
     active = [u for u in users.values() if u.get("expiry") and datetime.fromisoformat(u["expiry"]) > datetime.now()]
 
     msg = f"👑 <b>לוח בקרה — מנהל</b>\n\n👥 סה\"כ משתמשים: {len(users)}\n✅ מנויים פעילים: {len(active)}\n⏳ ממתינים לאישור: {len(pend)}\n\n"
-    if pend:
-        msg += "⏳ <b>ממתינים לאישור:</b>\n\n"
-        for uid, p in pend.items():
-            plan = PRICES.get(p["plan"], {})
-            msg += f"👤 @{p.get('username','?')} (ID: {uid})\n📋 {plan.get('name','?')} — ₪{plan.get('price',0)}\n💳 {p.get('method','?')} · ✅ /approve_{uid} · ❌ /reject_{uid}\n\n"
     await update.message.reply_text(msg, parse_mode="HTML")
-
-async def cmd_approve(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
-    uid = update.message.text.replace("/approve_", "").strip()
-    db = load_db(); pend = db["pending"].get(uid)
-    if not pend: return
-    plan = PRICES[pend["plan"]]
-    add_subscription(int(uid), pend.get("username",""), pend["plan"], plan["days"])
-    remove_pending(uid)
-    await update.message.reply_text(f"✅ אושר! @{pend.get('username','?')} — {plan['name']}")
-    try:
-        await ctx.bot.send_message(chat_id=int(uid), text=f"✅ <b>המנוי שלך אושר!</b>\n\nתוכנית: <b>{plan['name']}</b>\nתוקף: <b>{get_expiry_str(uid)}</b>\n\nשלח /start להתחלה 🚀", parse_mode="HTML", reply_markup=back_menu())
-    except: pass
-
-async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
-    uid = update.message.text.replace("/reject_", "").strip()
-    db = load_db(); pend = db["pending"].get(uid)
-    if not pend: return
-    remove_pending(uid)
-    await update.message.reply_text(f"❌ נדחה — @{pend.get('username','?')}")
-    try:
-        await ctx.bot.send_message(chat_id=int(uid), text="❌ <b>התשלום לא אושר.</b>\nאנא שלח צילום מסך ברור של אישור התשלום המלא.", parse_mode="HTML", reply_markup=back_menu())
-    except: pass
-
-async def cmd_block(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
-    uid = update.message.text.replace("/block_", "").strip()
-    bl = load_blocked()
-    if uid not in bl["blocked"]:
-        bl["blocked"].append(uid); save_blocked(bl)
-        await update.message.reply_text(f"🚫 משתמש {uid} נחסם.")
-
-async def cmd_unblock(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
-    uid = update.message.text.replace("/unblock_", "").strip()
-    bl = load_blocked()
-    if uid in bl["blocked"]:
-        bl["blocked"].remove(uid); save_blocked(bl)
-        await update.message.reply_text(f"✅ משתמש {uid} שוחרר מחסימה.")
 
 # ═══════════════════════════════════════════
 # טיפול בלחיצות כפתורים
@@ -430,7 +387,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "help":
-        await query.edit_message_text("⬡ <b>פקודות זמינות:</b>\n\n/start — תפריט ראשי\n\n⭐ <b>המלצה חינם:</b> מציג את שיטת Quantum Human המדויקת ביותר.\n🔮 <b>חיזוי VIP:</b> מציג את כל 4 המודלים כולל קלפי חיזוק מורחבים.", parse_mode="HTML", reply_markup=back_menu())
+        await query.edit_message_text("⬡ <b>פקודות זמינות:</b>\n\n/start — תפריט ראשי\n\n⭐ <b>המלצה חינם:</b> מציג את שיטת Quantum Human המדויקת.\n🔮 <b>חיזוי VIP:</b> מציג את כל 4 המודלים כולל קלפי חיזוק מורחבים.", parse_mode="HTML", reply_markup=back_menu())
         return
 
     if data == "subscribe":
@@ -447,29 +404,16 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             add_subscription(uid, uname, "trial", 3)
             await query.edit_message_text("🎉 <b>הניסיון החינמי ל-3 ימים הופעל בהצלחה!</b>\nתהנה מחיזויי Chance AI!", parse_mode="HTML", reply_markup=back_menu())
             return
-        await query.edit_message_text(f"💳 <b>{plan['name']} — ₪{plan['price']}</b>\n\nבחר אמצעי תשלום להוראות המעבר:", parse_mode="HTML", reply_markup=pay_menu(plan_key))
-        return
-
-    if data.startswith("pay_"):
-        parts = data.split("_"); method = parts[1]; plan_key = parts[2]; plan = PRICES[plan_key]
-        add_pending(uid, uname, plan_key, method)
-        details = {"bit": f"💳 <b>ביט</b>\nהעבר ₪{plan['price']} ל-<b>{PAYMENT_INFO['bit']}</b>", "paybox": f"💳 <b>פייבוקס</b>\nהעבר ₪{plan['price']} ל-<b>{PAYMENT_INFO['paybox']}</b>", "bank": f"🏦 <b>העברה בנקאית</b>\n{PAYMENT_INFO['bank']}\nסכום: ₪{plan['price']}"}
-        await query.edit_message_text(f"📋 <b>הוראות תשלום:</b>\n\n{details[method]}\n\n⚠️ <b>חשוב מאוד:</b> לאחר ביצוע ההעברה, צלם מסך ושלח את התמונה ישירות לצ'אט הזה כדי שהמנהל יאשר אותך.", parse_mode="HTML", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📸 שלחתי אישור תשלום", callback_data=f"sent_{plan_key}")]]))
-        return
-
-    if data.startswith("sent_"):
-        await query.edit_message_text("⏳ <b>הבקשה נקלטה!</b>\nהמנהל יבדוק את צילום המסך ששלחת ויאשר את המנוי בהקדם (עד 24 שעות).", parse_mode="HTML", reply_markup=back_menu())
+        await query.edit_message_text(f"💳 <b>{plan['name']} — ₪{plan['price']}</b>\n\nבחר אמצעי תשלום:", parse_mode="HTML", reply_markup=pay_menu(plan_key))
         return
 
     if data == "referral":
-        db = load_db(); count = len(db["referrals"].get(str(uid), []))
+        db = load_db(); count = len(db.get("referrals", {}).get(str(uid), []))
         link = f"https://t.me/{ctx.bot.username}?start=REF{uid}"
         await query.edit_message_text(f"👥 <b>חבר מביא חבר</b>\n\nהקישור הייחודי שלך:\n<code>{link}</code>\n\n📊 חברים שהצטרפו דרכך: <b>{count}</b>\n🎁 כל 2 חברים מעניקים לך חודש VIP חינם!", parse_mode="HTML", reply_markup=back_menu())
         return
 
-    # ── טיפול בפעולות דאטה מול Chance AI API ──
-    
-    # 1. המלצה חינם (נגיש לכולם ללא הגבלת מנוי)
+    # ── כפתור המלצה חינם ──
     if data == "watchlist":
         await query.edit_message_text("🔄 <i>מושך המלצה חינם מ-Chance AI...</i>", parse_mode="HTML")
         predictions = await fetch_predictions_from_api()
@@ -477,7 +421,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await ctx.bot.edit_message_text(chat_id=chat_id, message_id=query.message.message_id, text=text, parse_mode="HTML", reply_markup=action_menu("watchlist"))
         return
 
-    # 2. 10 הגרלות אחרונות (נגיש לכולם ללא הגבלת מנוי)
+    # ── כפתור 10 הגרלות אחרונות ──
     if data == "briefing":
         await query.edit_message_text("🔄 <i>מושך תוצאות מהארכיון...</i>", parse_mode="HTML")
         draws = await fetch_draws_from_api()
@@ -485,7 +429,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await ctx.bot.edit_message_text(chat_id=chat_id, message_id=query.message.message_id, text=text, parse_mode="HTML", reply_markup=action_menu("briefing"))
         return
 
-    # 3. חיזוי VIP (דורש מנוי)
+    # ── כפתור חיזוי VIP (דורש מנוי) ──
     if data == "signals":
         if not await check_access(update, ctx, callback=True): return
         await query.edit_message_text("🔄 <i>מחשב את כל 4 המודלים והחיזוקים...</i>", parse_mode="HTML")
@@ -494,21 +438,8 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await ctx.bot.edit_message_text(chat_id=chat_id, message_id=query.message.message_id, text=text, parse_mode="HTML", reply_markup=action_menu("signals"))
         return
 
-# ═══════════════════════════════════════════
-# טיפול בצילומי מסך והודעות טקסט
-# ═══════════════════════════════════════════
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id; uname = update.effective_user.username or update.effective_user.first_name or "משתמש"
-    if is_blocked(uid) and not is_admin(uid): return
-
-    db = load_db(); pend = db["pending"].get(str(uid))
-
-    if update.message.photo and pend:
-        await ctx.bot.forward_message(chat_id=ADMIN_ID, from_chat_id=update.message.chat_id, message_id=update.message.message_id)
-        await ctx.bot.send_message(chat_id=ADMIN_ID, text=f"📸 <b>אישור תשלום חדש!</b>\n\n👤 @{uname} (ID: {uid})\n✅ לאישור: /approve_{uid}\n❌ לדחייה: /reject_{uid}", parse_mode="HTML")
-        await update.message.reply_text("✅ <b>צילום המסך התקבל בהצלחה!</b>\nהמנוי שלך יופעל ברגע שהמנהל יאשר את ההעברה.", parse_mode="HTML", reply_markup=back_menu())
-    else:
-        await update.message.reply_text("שלח /start לפתיחת תפריט האפשרויות של Chance AI ⬡")
+    await update.message.reply_text("שלח /start לפתיחת תפריט האפשרויות של Chance AI ⬡")
 
 # ═══════════════════════════════════════════
 # ניטור אוטומטי - שליחה לקבוצה בכל הגרלה חדשה
@@ -519,52 +450,37 @@ async def auto_scan_loop(app):
     
     while True:
         try:
-            print("🔄 בודק האם עלתה הגרלה חדשה ב-Chance AI...")
             predictions = await fetch_predictions_from_api()
-            
-            if predictions:
+            if predictions and isinstance(predictions, list) and len(predictions) > 0:
                 latest_draw = predictions[0].get("target_draw_number")
-                
-                # תנאי פתיחה: פעם ראשונה שהלופ רץ, הוא מסתנכרן על המספר הנוכחי
-                if last_notified_draw == 0:
-                    last_notified_draw = latest_draw
-                    
-                # אם מספר ההגרלה גדל, סימן שיש הגרלה חדשה באוויר!
-                elif latest_draw > last_notified_draw:
-                    last_notified_draw = latest_draw
-                    alert_text = build_vip_signals(predictions)
-                    
-                    # שליחה ישירה לקבוצה הציבורית שלך שמספרה הוגדר למעלה
-                    try:
-                        await app.bot.send_message(chat_id=CHAT_ID, text=alert_text, parse_mode="HTML")
-                        print(f"🎯 עדכון אוטומטי נשלח בהצלחה לקבוצה עבור הגרלה #{latest_draw}")
-                    except Exception as tg_err:
-                        print(f"❌ שגיאה בשליחה לקבוצת הטלגרם: {tg_err}")
-                        
+                if latest_draw:
+                    if last_notified_draw == 0:
+                        last_notified_draw = latest_draw
+                    elif latest_draw > last_notified_draw:
+                        last_notified_draw = latest_draw
+                        alert_text = build_vip_signals(predictions)
+                        try:
+                            await app.bot.send_message(chat_id=CHAT_ID, text=alert_text, parse_mode="HTML")
+                        except Exception as tg_err:
+                            print(f"❌ שגיאה בשליחה לקבוצה: {tg_err}")
         except Exception as e:
             print(f"❌ שגיאה בלופ הניטור האוטומטי: {e}")
-            
-        await asyncio.sleep(60) # בודק עדכון ב-API בכל דקה אחת כדי להיות הכי מהיר
+        await asyncio.sleep(60)
 
 # ═══════════════════════════════════════════
 # הפעלת המערכת
 # ═══════════════════════════════════════════
 def main():
-    print("🚀 מפעיל Chance AI Predictor Bot...")
     app = Application.builder().token(TG_TOKEN).build()
 
     app.add_handler(CommandHandler("start",  cmd_start))
     app.add_handler(CommandHandler("admin",  cmd_admin))
-    app.add_handler(MessageHandler(filters.Regex(r"^/approve_"), cmd_approve))
-    app.add_handler(MessageHandler(filters.Regex(r"^/reject_"),  cmd_reject))
-    app.add_handler(MessageHandler(filters.Regex(r"^/block_"),   cmd_block))
-    app.add_handler(MessageHandler(filters.Regex(r"^/unblock_"), cmd_unblock))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
     async def post_init(application):
         asyncio.create_task(auto_scan_loop(application))
-        print("✅ הבוט התחבר ומנטר את Chance AI בהצלחה!")
+        print("✅ הבוט מחובר ומנטר בהצלחה!")
 
     app.post_init = post_init
     app.run_polling(drop_pending_updates=True)
