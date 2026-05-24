@@ -11,12 +11,13 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 # ═══════════════════════════════════════════
 # הגדרות מאובטחות וחיבור ל-Base44 API
 # ═══════════════════════════════════════════
-TG_TOKEN  = os.environ.get("TG_TOKEN",  "7754804245:AAEf5lCTTU3NB7qNnOa1-HKJXcpZLDOdseM")
-CHAT_ID   = os.environ.get("CHAT_ID",   "-1002360888694") 
+# המערכת תמשוך את המשתנים מתוך ה-Variables של Railway
+TG_TOKEN  = os.environ.get("TG_TOKEN")
+CHAT_ID   = os.environ.get("CHAT_ID", "-1002360888694") 
 ADMIN_ID  = int(os.environ.get("ADMIN_ID", "6775881845"))
 
-CHANCE_APP_ID  = "699f6d52f3302128ab050b10"
-CHANCE_API_KEY = "20742ca24625436b8963159c29dd34c3"
+CHANCE_APP_ID  = os.environ.get("CHANCE_APP_ID")
+CHANCE_API_KEY = os.environ.get("CHANCE_API_KEY")
 BASE_URL       = "https://api.base44.com/v1"
 
 # ── פרטי תשלום ──
@@ -109,6 +110,10 @@ def add_referral(referrer_id, new_user_id):
 # ═══════════════════════════════════════════
 async def make_base44_request(entity_name, params=None):
     """מבצעת פנייה ל-API ומחלצת את מערך הרשומות בצורה בטוחה לחלוטין"""
+    if not CHANCE_APP_ID or not CHANCE_API_KEY:
+        print(f"⚠️ שגיאה: מפתחות ה-API חסרים ב-Variables של Railway!")
+        return []
+
     headers = {
         "appId": CHANCE_APP_ID,
         "api_key": CHANCE_API_KEY,
@@ -425,7 +430,6 @@ async def auto_scan_loop(app):
         try:
             records = await fetch_predictions()
             if records and isinstance(records, list) and len(records) > 0:
-                # שימוש במתודת .get בטוחה למניעת קריסות בלופ האוטומטי
                 latest_draw = records[0].get("target_draw_number") if isinstance(records[0], dict) else None
                 if latest_draw:
                     if last_notified_draw == 0:
@@ -447,6 +451,10 @@ async def auto_scan_loop(app):
 
 def main():
     print("🚀 מפעיל את Chance AI Bot הגרסה היציבה החסינה...")
+    if not TG_TOKEN:
+        print("❌ שגיאה חמורה: TG_TOKEN חסר ב-Variables של Railway! הבוט לא יכול להתחיל.")
+        return
+
     app = Application.builder().token(TG_TOKEN).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
