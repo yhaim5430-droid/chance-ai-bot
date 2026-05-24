@@ -104,17 +104,16 @@ async def handle_free_prediction(update: Update, context: ContextTypes.DEFAULT_T
     FREE_PRED_USED[user_id] = today
     pred = get_prediction_from_github()
 
-    if pred and pred.get("draw_number", "?") != "?":
+    if pred and pred.get("draw"):
+        baseline = pred.get("baseline", {})
         await update.message.reply_html(
             f"⭐ <b>חיזוי חינם יומי</b>\n"
             f"<i>Baseline — ללא ניתוח מועצה</i>\n\n"
-            f"🎯 הגרלה מס' <b>{pred.get('draw_number','?')}</b>\n\n"
-            f"♠️ עלה:   <b>{pred.get('spade','?')}</b>\n"
-            f"❤️ לב:    <b>{pred.get('heart','?')}</b>\n"
-            f"♦️ יהלום: <b>{pred.get('diamond','?')}</b>\n"
-            f"♣️ תלתן:  <b>{pred.get('club','?')}</b>\n\n"
-            f"📊 ביטחון: <b>{pred.get('confidence','?')}</b>\n"
-            f"🕐 עודכן: {pred.get('updated','')}\n\n"
+            f"🎯 הגרלה מס' <b>{pred.get('draw','?')}</b>\n\n"
+            f"♠️ עלה:   <b>{baseline.get('spade','?')}</b>\n"
+            f"❤️ לב:    <b>{baseline.get('heart','?')}</b>\n"
+            f"♦️ יהלום: <b>{baseline.get('diamond','?')}</b>\n"
+            f"♣️ תלתן:  <b>{baseline.get('club','?')}</b>\n\n"
             f"🔒 לחיזוי מלא + ניתוח מועצה לפני <b>כל הגרלה</b>\n"
             f"שדרג ל-👑 פרמיום!"
         )
@@ -136,14 +135,15 @@ async def handle_last_10(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     pred = get_prediction_from_github()
-    if pred:
+    if pred and pred.get("draw"):
+        baseline = pred.get("baseline", {})
         await update.message.reply_html(
             f"🎰 <b>חיזוי אחרון</b>\n\n"
-            f"🔹 <b>#{pred.get('draw_number','?')}</b>\n"
-            f"♠️ עלה: {pred.get('spade','?')}\n"
-            f"❤️ לב: {pred.get('heart','?')}\n"
-            f"♦️ יהלום: {pred.get('diamond','?')}\n"
-            f"♣️ תלתן: {pred.get('club','?')}\n\n"
+            f"🔹 <b>#{pred.get('draw','?')}</b>\n"
+            f"♠️ עלה: {baseline.get('spade','?')}\n"
+            f"❤️ לב: {baseline.get('heart','?')}\n"
+            f"♦️ יהלום: {baseline.get('diamond','?')}\n"
+            f"♣️ תלתן: {baseline.get('club','?')}\n\n"
             f"<i>נתונים נוספים בקרוב...</i>"
         )
     else:
