@@ -1,308 +1,80 @@
 import logging
 import os
-import json
+import requests
 import threading
-import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from datetime import datetime
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
+# הגדרות מערכת
 logging.basicConfig(level=logging.INFO)
-
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-OWNER_ID = 6775881845
 PORT = int(os.environ.get("PORT", 10000))
 
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/yhaim5430-droid/chance-ai-bot/main/prediction_latest.json"
+# הגדרות Base44
+BASE44_HEADERS = {
+    "app_id": "699f6d52f3302128ab050b10",
+    "api_key": "20742ca24625436b8963159c29dd34c3"
+}
+BASE44_API_URL = "https://api.base44.io/entities/Draw"
 
-PREMIUM_USERS = set()
-FREE_PRED_USED = {}
+# ========== תקשורת עם Base44 ==========
+def get_last_10_draws_from_base44():
+    params = {
+        "limit": 10,
+        "sort_by": "-draw_number"
+    }
+    try:
+        response = requests.get(BASE44_API_URL, headers=BASE44_HEADERS, params=params)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            logging.error(f"Base44 API Error: {response.status_code}")
+            return None
+    except Exception as e:
+        logging.error(f"Connection failed: {e}")
+        return None
 
-# ========== שרת HTTP קטן כדי ש-Render לא יסגור ==========
+# ========== שרת Health ==========
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Chance Bot is running!")
-    def log_message(self, format, *args):
-        pass  # שקט בלוגים
+        self.wfile.write(b"Chance Bot is running and connected to Base44!")
 
 def run_health_server():
     server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
-    logging.info(f"Health server running on port {PORT}")
     server.serve_forever()
 
-# ========== תפריט ==========
-def main_menu(premium=False):
-    keyboard = [
-        ["⭐ המלצה חינם", "🎰 10 הגרלות אחרונות"],
-        ["💳 רכישת מנוי", "👑 אזור VIP" if premium else "👑 פרמיום"],
-        ["👥 חבר מביא חבר", "❓ שאלות ותשובות"],
-        ["📞 יצירת קשר"]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+# ========== לוגיקת תפריט ==========
+def main_menu():
+    return ReplyKeyboardMarkup([["⭐ המלצה חינם"], ["🎰 10 הגרלות אחרונות"]], resize_keyboard=True)
 
-def is_premium(user_id):
-    return user_id in PREMIUM_USERS or user_id == OWNER_ID
-
-def get_prediction_from_github():
-    try:
-        req = urllib.request.Request(
-            GITHUB_RAW_URL,
-            headers={"Cache-Control": "no-cache", "User-Agent": "ChanceBot/1.0"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read())
-    except Exception as e:
-        logging.error(f"שגיאה בקריאת GitHub: {e}")
-        return None
-
-# ========== הנדלרים ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    name = update.effective_user.first_name or "חבר"
-    premium = is_premium(user_id)
-    await update.message.reply_html(
-        f"👋 שלום <b>{name}</b>!\n\n"
-        f"🃏 ברוך הבא ל-<b>♣️♦️ CHANCE PREDICTOR ♠️❤️</b>\n\n"
-        + (f"👑 <b>מנוי פרמיום פעיל!</b>\n" if premium else
-           f"🔓 גרסה חינמית — שדרג לפרמיום!\n💳 250₪/חודש | 2,500₪/שנה\n") +
-        f"\nבחר אפשרות 👇",
-        reply_markup=main_menu(premium)
-    )
+    await update.message.reply_text("ברוך הבא לבוט החיזויים!", reply_markup=main_menu())
 
-async def handle_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📅 חודשי — 250₪", callback_data="buy_monthly")],
-        [InlineKeyboardButton("📆 שנתי — 2,500₪ (חסוך 500₪!)", callback_data="buy_yearly")]
-    ])
-    await update.message.reply_html(
-        "💳 <b>רכישת מנוי פרמיום</b>\n\n"
-        "👑 <b>מה כלול:</b>\n"
-        "• 4 מודלי חיזוי מלאים\n"
-        "• ניתוח מועצה (דן, רון, מיכאל, אלון)\n"
-        "• קלפים חמים/קרים\n"
-        "• עדכונים לפני כל הגרלה\n\n"
-        "בחר תכנית:",
-        reply_markup=keyboard
-    )
-
-async def handle_free_prediction(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    if FREE_PRED_USED.get(user_id) == today and user_id != OWNER_ID:
-        await update.message.reply_html(
-            "⭐ <b>המלצה חינם</b>\n\n"
-            "⏰ כבר קיבלת את החיזוי החינמי שלך היום!\n\n"
-            "לחיזויים מלאים לפני <b>כל הגרלה</b> + ניתוח מועצה מלא 👑\n"
-            "לחץ על 💳 <b>רכישת מנוי</b>"
-        )
-        return
-
-    FREE_PRED_USED[user_id] = today
-    pred = get_prediction_from_github()
-
-    if pred and pred.get("draw"):
-        baseline = pred.get("baseline", {})
-        await update.message.reply_html(
-            f"⭐ <b>חיזוי חינם יומי</b>\n"
-            f"<i>Baseline — ללא ניתוח מועצה</i>\n\n"
-            f"🎯 הגרלה מס' <b>{pred.get('draw','?')}</b>\n\n"
-            f"♠️ עלה:   <b>{baseline.get('spade','?')}</b>\n"
-            f"❤️ לב:    <b>{baseline.get('heart','?')}</b>\n"
-            f"♦️ יהלום: <b>{baseline.get('diamond','?')}</b>\n"
-            f"♣️ תלתן:  <b>{baseline.get('club','?')}</b>\n\n"
-            f"🔒 לחיזוי מלא + ניתוח מועצה לפני <b>כל הגרלה</b>\n"
-            f"שדרג ל-👑 פרמיום!"
-        )
-    else:
-        await update.message.reply_html(
-            "⭐ <b>חיזוי חינם</b>\n\n"
-            "⏳ החיזוי הבא עוד לא זמין — יתעדכן לפני ההגרלה הבאה.\n\n"
-            "🔔 לקבלת עדכונים מיידיים שדרג ל-👑 פרמיום!"
-        )
-
-async def handle_last_10(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not is_premium(user_id):
-        await update.message.reply_html(
-            "🎰 <b>10 הגרלות האחרונות</b>\n\n"
-            "🔒 תוכן זה זמין <b>למנויים בלבד</b>\n\n"
-            "לחץ על 💳 <b>רכישת מנוי</b> לגישה מלאה 👑"
-        )
-        return
-
-    pred = get_prediction_from_github()
-    if pred and pred.get("draw"):
-        baseline = pred.get("baseline", {})
-        await update.message.reply_html(
-            f"🎰 <b>חיזוי אחרון</b>\n\n"
-            f"🔹 <b>#{pred.get('draw','?')}</b>\n"
-            f"♠️ עלה: {baseline.get('spade','?')}\n"
-            f"❤️ לב: {baseline.get('heart','?')}\n"
-            f"♦️ יהלום: {baseline.get('diamond','?')}\n"
-            f"♣️ תלתן: {baseline.get('club','?')}\n\n"
-            f"<i>נתונים נוספים בקרוב...</i>"
-        )
-    else:
-        await update.message.reply_html("❌ לא ניתן לטעון נתונים כרגע.")
-
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data == "buy_monthly":
-        await query.message.reply_html(
-            "💳 <b>תשלום — מנוי חודשי (250₪)</b>\n\n"
-            "1️⃣ בצע העברה בנקאית / ביט / פייבוקס\n"
-            "2️⃣ שלח <b>צילום מסך</b> של ההעברה כאן\n"
-            "3️⃣ המנוי יופעל תוך 24 שעות ✅"
-        )
-        context.user_data["plan"] = "monthly"
-        context.user_data["price"] = 250
-
-    elif data == "buy_yearly":
-        await query.message.reply_html(
-            "💳 <b>תשלום — מנוי שנתי (2,500₪)</b>\n\n"
-            "1️⃣ בצע העברה בנקאית / ביט / פייבוקס\n"
-            "2️⃣ שלח <b>צילום מסך</b> של ההעברה כאן\n"
-            "3️⃣ המנוי יופעל תוך 24 שעות ✅"
-        )
-        context.user_data["plan"] = "yearly"
-        context.user_data["price"] = 2500
-
-    elif data.startswith("approve_"):
-        parts = data.split("_")
-        user_id = int(parts[1])
-        plan = parts[2] if len(parts) > 2 else "monthly"
-        PREMIUM_USERS.add(user_id)
-        await context.bot.send_message(
-            chat_id=user_id,
-            text="🎉 <b>המנוי הופעל!</b>\n👑 ברוך הבא לפרמיום!\nגישה מלאה לכל הפיצ'רים 🚀",
-            parse_mode="HTML",
-            reply_markup=main_menu(premium=True)
-        )
-        try:
-            await query.edit_message_caption(
-                caption=query.message.caption + "\n\n✅ <b>אושר!</b>",
-                parse_mode="HTML"
-            )
-        except Exception:
-            await query.message.reply_html("✅ המנוי אושר!")
-
-    elif data.startswith("reject_"):
-        user_id = int(data.split("_")[1])
-        await context.bot.send_message(
-            chat_id=user_id,
-            text="❌ <b>ההוכחה לא אושרה.</b>\nלבירורים לחץ על 📞 יצירת קשר",
-            parse_mode="HTML"
-        )
-        try:
-            await query.edit_message_caption(
-                caption=query.message.caption + "\n\n❌ <b>נדחה</b>",
-                parse_mode="HTML"
-            )
-        except Exception:
-            await query.message.reply_html("❌ הבקשה נדחתה.")
-
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    plan = context.user_data.get("plan", "monthly")
-    price = context.user_data.get("price", 250)
-    file_id = update.message.photo[-1].file_id
-
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ אשר מנוי", callback_data=f"approve_{user.id}_{plan}"),
-        InlineKeyboardButton("❌ דחה", callback_data=f"reject_{user.id}")
-    ]])
-
-    caption = (
-        f"💳 <b>בקשת מנוי חדשה!</b>\n"
-        f"👤 {user.first_name} {user.last_name or ''}\n"
-        f"🆔 {user.id}\n"
-        f"📱 @{user.username or 'אין'}\n"
-        f"📅 {'חודשי' if plan == 'monthly' else 'שנתי'} — {price}₪"
-    )
-
-    await context.bot.send_photo(
-        chat_id=OWNER_ID,
-        photo=file_id,
-        caption=caption,
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
-    await update.message.reply_html(
-        "✅ <b>תודה! ההוכחה התקבלה.</b>\n"
-        "המנוי יופעל תוך 24 שעות לאחר אישור 🎉"
-    )
-
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text or ""
-    user_id = update.effective_user.id
-    premium = is_premium(user_id)
-
-    if "רכישת" in text or "💳" in text:
-        await handle_buy(update, context)
-    elif "מנוי" in text and "רכישת" not in text:
-        await handle_buy(update, context)
-    elif "המלצה" in text or "⭐" in text:
-        await handle_free_prediction(update, context)
-    elif "10 הגרלות" in text or "🎰" in text:
-        await handle_last_10(update, context)
-    elif "פרמיום" in text or "👑" in text or "VIP" in text or "אזור" in text:
-        if premium:
-            await update.message.reply_html("👑 <b>אזור VIP</b>\n\nהמנוי שלך פעיל! גישה מלאה לכל הפיצ'רים ✅")
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    
+    if "10 הגרלות אחרונות" in text:
+        draws = get_last_10_draws_from_base44()
+        if draws:
+            msg = "🎰 <b>10 ההגרלות האחרונות:</b>\n\n"
+            for d in draws:
+                msg += f"הגרלה {d['draw_number']}: ♠{d['spade']} ♥{d['heart']} ♦{d['diamond']} ♣{d['club']}\n"
+            await update.message.reply_html(msg)
         else:
-            await update.message.reply_html("🔒 <b>אזור VIP — מנויים בלבד</b>\n\nלחץ על 💳 <b>רכישת מנוי</b> להצטרפות!")
-    elif "חבר" in text or "👥" in text:
-        ref_link = f"https://t.me/CHANCEAihaybot?start=ref_{user_id}"
-        await update.message.reply_html(
-            f"👥 <b>חבר מביא חבר!</b>\n\n"
-            f"שתף את הלינק שלך:\n<code>{ref_link}</code>\n\n"
-            f"🎁 על כל <b>2 חברים</b> שמשלמים — חודש חינם!"
-        )
-    elif "שאלות" in text or "❓" in text:
-        await update.message.reply_html(
-            "❓ <b>שאלות ותשובות</b>\n\n"
-            "🔹 <b>מחיר?</b> 250₪/חודש | 2,500₪/שנה\n"
-            "🔹 <b>איך מקבלים חיזוי?</b> לחץ ⭐ המלצה חינם\n"
-            "🔹 <b>מתי מתעדכנים חיזויים?</b> לפני כל הגרלה\n"
-            "🔹 <b>שאלה אחרת?</b> לחץ 📞 יצירת קשר"
-        )
-    elif "קשר" in text or "📞" in text:
-        await update.message.reply_html(
-            "📞 <b>יצירת קשר</b>\n\n"
-            "לכל שאלה או בעיה — פנה ישירות:\n"
-            "👤 @yhaim5430_droid\n\n"
-            "⏰ זמן תגובה: עד 24 שעות"
-        )
+            await update.message.reply_text("מצטער, כרגע לא ניתן למשוך נתונים. נסה שוב מאוחר יותר.")
     else:
-        await update.message.reply_html(
-            "👇 בחר אפשרות מהתפריט",
-            reply_markup=main_menu(premium)
-        )
+        await update.message.reply_text("בחר אפשרות מהתפריט:", reply_markup=main_menu())
 
 # ========== הפעלה ==========
-def main():
-    if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN לא מוגדר!")
-
-    # הפעל את שרת ה-HTTP בthread נפרד
-    health_thread = threading.Thread(target=run_health_server, daemon=True)
-    health_thread.start()
-    logging.info("Health server thread started")
-
+if __name__ == "__main__":
+    threading.Thread(target=run_health_server, daemon=True).start()
+    
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-    logging.info("🤖 בוט מופעל עם HTTP health server!")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    main()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    logging.info("Bot is running...")
+    app.run_polling()
