@@ -1,308 +1,364 @@
-import logging
 import os
+import asyncio
+import aiohttp
 import json
-import threading
-import urllib.request
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from datetime import datetime
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+import hashlib
+import secrets
+from datetime import datetime, timedelta
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-logging.basicConfig(level=logging.INFO)
+# ═══════════════════════════════════════════
+# הגדרות מאובטחות וחיבור ל-Chance AI
+# ═══════════════════════════════════════════
+TG_TOKEN  = os.environ.get("TG_TOKEN",  "7754804245:AAEf5lCTTU3NB7qNnOa1-HKJXcpZLDOdseM")
+CHAT_ID   = os.environ.get("CHAT_ID",   "-1002360888694") # מזהה הקבוצה שלך מהצילום מסך
+ADMIN_ID  = int(os.environ.get("ADMIN_ID", "6775881845"))
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-OWNER_ID = 6775881845
-PORT = int(os.environ.get("PORT", 10000))
+# פרטי ה-API של אפליקציית Chance AI מתוך צילום המסך שלך:
+CHANCE_APP_ID  = "699f6d52f3302128ab050b10"
+CHANCE_API_KEY = "20742ca24625436b8963159c29dd34c3"
+BASE_URL       = "https://api.base44.com/v1" # כתובת ה-API הסטנדרטית של פלטפורמת Base44
 
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/yhaim5430-droid/chance-ai-bot/main/prediction_latest.json"
+# ── פרטי תשלום ──
+PAYMENT_INFO = {
+    "bit":    "שלח לביט למספר: *יתקבל לאחר פנייה*",
+    "paybox": "שלח לפייבוקס למספר: *יתקבל לאחר פנייה*",
+    "bank":   (
+        "🏦 בנק הבינלאומי הראשון לישראל\n"
+        "סניף: 062 — קרית גת\n"
+        "מספר חשבון: 259794\n"
+        "מספר IBAN/זיהוי: 034653667\n"
+        "מדינה: ישראל"
+    ),
+}
 
-PREMIUM_USERS = set()
-FREE_PRED_USED = {}
+PRICES = {
+    "trial":   {"name": "ניסיון חינמי",  "price": 0,    "days": 3},
+    "monthly": {"name": "מנוי חודשי",    "price": 300,  "days": 30},
+    "yearly":  {"name": "מנוי שנתי",     "price": 3000, "days": 365},
+}
 
-# ========== שרת HTTP קטן כדי ש-Render לא יסגור ==========
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Chance Bot is running!")
-    def log_message(self, format, *args):
-        pass  # שקט בלוגים
+# ═══════════════════════════════════════════
+# מסד נתונים מאובטח
+# ═══════════════════════════════════════════
+DB_FILE      = "users.json"
+BLOCKED_FILE = "blocked.json"
+LOG_FILE     = "security.log"
 
-def run_health_server():
-    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
-    logging.info(f"Health server running on port {PORT}")
-    server.serve_forever()
-
-# ========== תפריט ==========
-def main_menu(premium=False):
-    keyboard = [
-        ["⭐ המלצה חינם", "🎰 10 הגרלות אחרונות"],
-        ["💳 רכישת מנוי", "👑 אזור VIP" if premium else "👑 פרמיום"],
-        ["👥 חבר מביא חבר", "❓ שאלות ותשובות"],
-        ["📞 יצירת קשר"]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
-def is_premium(user_id):
-    return user_id in PREMIUM_USERS or user_id == OWNER_ID
-
-def get_prediction_from_github():
+def load_db():
     try:
-        req = urllib.request.Request(
-            GITHUB_RAW_URL,
-            headers={"Cache-Control": "no-cache", "User-Agent": "ChanceBot/1.0"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read())
+        with open(DB_FILE, "r") as f: return json.load(f)
+    except: return {"users": {}, "pending": {}, "referrals": {}}
+
+def save_db(db):
+    with open(DB_FILE, "w") as f: json.dump(db, f, indent=2, ensure_ascii=False)
+
+def load_blocked():
+    try:
+        with open(BLOCKED_FILE, "r") as f: return json.load(f)
+    except: return {"blocked": [], "attempts": {}}
+
+def save_blocked(data):
+    with open(BLOCKED_FILE, "w") as f: json.dump(data, f, indent=2)
+
+def security_log(event, user_id, detail=""):
+    t = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(LOG_FILE, "a") as f: f.write(f"[{t}] {event} | UID:{user_id} | {detail}\n")
+
+def is_blocked(user_id):
+    bl = load_blocked()
+    return str(user_id) in bl["blocked"]
+
+def record_attempt(user_id):
+    bl  = load_blocked()
+    uid = str(user_id)
+    bl["attempts"][uid] = bl["attempts"].get(uid, 0) + 1
+    if bl["attempts"][uid] >= 5:
+        if uid not in bl["blocked"]:
+            bl["blocked"].append(uid)
+            security_log("AUTO_BLOCK", user_id, f"יותר מ-5 ניסיונות")
+    save_blocked(bl)
+    return bl["attempts"][uid]
+
+def is_admin(user_id): return int(user_id) == ADMIN_ID
+def get_user(user_id): return load_db()["users"].get(str(user_id))
+
+def is_subscribed(user_id):
+    if is_admin(user_id): return True
+    user = get_user(user_id)
+    if not user or not user.get("expiry"): return False
+    return datetime.fromisoformat(user["expiry"]) > datetime.now()
+
+def is_trial_used(user_id):
+    user = get_user(user_id)
+    return user.get("trial_used", False) if user else False
+
+def get_expiry_str(user_id):
+    user = get_user(user_id)
+    if not user or not user.get("expiry"): return "—"
+    exp  = datetime.fromisoformat(user["expiry"])
+    days = max(0, (exp - datetime.now()).days)
+    return f"{exp.strftime('%d/%m/%Y')} ({days} ימים)"
+
+def add_subscription(user_id, username, plan_key, days):
+    db  = load_db()
+    uid = str(user_id)
+    now = datetime.now()
+    usr = db["users"].get(uid, {})
+    cur = usr.get("expiry")
+    base = datetime.fromisoformat(cur) if cur and datetime.fromisoformat(cur) > now else now
+    exp  = base + timedelta(days=days)
+
+    db["users"][uid] = {
+        "user_id":        user_id,
+        "username":       username,
+        "plan":           plan_key,
+        "expiry":         exp.isoformat(),
+        "joined":         usr.get("joined", now.isoformat()),
+        "trial_used":     True if plan_key == "trial" else usr.get("trial_used", False),
+        "referrals_count": usr.get("referrals_count", 0),
+        "referral_code":  f"REF{user_id}",
+        "approved_by":    "admin",
+        "approved_at":    now.isoformat(),
+    }
+    save_db(db)
+    security_log("SUBSCRIPTION", user_id, f"plan={plan_key} days={days} exp={exp.strftime('%d/%m/%Y')}")
+
+def add_pending(user_id, username, plan_key, method):
+    db = load_db()
+    db["pending"][str(user_id)] = {
+        "user_id":  user_id,
+        "username": username,
+        "plan":     plan_key,
+        "method":   method,
+        "time":     datetime.now().isoformat(),
+        "token":    secrets.token_hex(8),
+    }
+    save_db(db)
+
+def remove_pending(user_id):
+    db = load_db()
+    db["pending"].pop(str(user_id), None)
+    save_db(db)
+
+def add_referral(referrer_id, new_user_id):
+    db  = load_db()
+    rid = str(referrer_id)
+    if rid not in db["referrals"]: db["referrals"][rid] = []
+    if str(new_user_id) not in db["referrals"][rid]:
+        db["referrals"][rid].append(str(new_user_id))
+        count = len(db["referrals"][rid])
+        usr   = db["users"].get(rid, {})
+        db["users"][rid] = {**usr, "referrals_count": count}
+        save_db(db)
+        return count
+    return len(db["referrals"].get(rid, []))
+
+# ═══════════════════════════════════════════
+# פונקציות משיכת נתונים ישירות מ-Chance AI
+# ═══════════════════════════════════════════
+async def fetch_predictions():
+    """מושך את כל החיזויים האחרונים מטבלת Prediction באפליקציה שלך"""
+    headers = {"Authorization": f"Bearer {CHANCE_API_KEY}", "Content-Type": "application/json"}
+    url = f"{BASE_URL}/apps/{CHANCE_APP_ID}/entities/Prediction/records"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, params={"sort": "-target_draw_number", "limit": 20}) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    return data.get("records", [])
     except Exception as e:
-        logging.error(f"שגיאה בקריאת GitHub: {e}")
-        return None
+        print(f"❌ שגיאה במשיכת חיזויים: {e}")
+    return []
 
-# ========== הנדלרים ==========
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    name = update.effective_user.first_name or "חבר"
-    premium = is_premium(user_id)
-    await update.message.reply_html(
-        f"👋 שלום <b>{name}</b>!\n\n"
-        f"🃏 ברוך הבא ל-<b>♣️♦️ CHANCE PREDICTOR ♠️❤️</b>\n\n"
-        + (f"👑 <b>מנוי פרמיום פעיל!</b>\n" if premium else
-           f"🔓 גרסה חינמית — שדרג לפרמיום!\n💳 250₪/חודש | 2,500₪/שנה\n") +
-        f"\nבחר אפשרות 👇",
-        reply_markup=main_menu(premium)
-    )
+async def fetch_draws():
+    """מושך את תוצאות ההגרלות האחרונות מטבלת Draw באפליקציה שלך"""
+    headers = {"Authorization": f"Bearer {CHANCE_API_KEY}", "Content-Type": "application/json"}
+    url = f"{BASE_URL}/apps/{CHANCE_APP_ID}/entities/Draw/records"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, params={"sort": "-draw_number", "limit": 10}) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    return data.get("records", [])
+    except Exception as e:
+        print(f"❌ שגיאה במשיכת הגרלות: {e}")
+    return []
 
-async def handle_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📅 חודשי — 250₪", callback_data="buy_monthly")],
-        [InlineKeyboardButton("📆 שנתי — 2,500₪ (חסוך 500₪!)", callback_data="buy_yearly")]
+# ── עיצוב הודעות לבוט החדש ──
+def build_free_recommendation(predictions):
+    if not predictions: return "❌ אין חיזויים מעודכנים במערכת כרגע."
+    
+    # סינון מודל Human (Quantum Human v5.0)
+    human_pred = [p for p in predictions if p.get("method") in ("Human", "Quantum Human v5.0")]
+    if not human_pred: return "❌ לא נמצא חיזוי מעודכן לשיטת Quantum Human."
+    
+    p = human_pred[0]
+    return (f"⭐ <b>המלצה חינם — Quantum Human v5.0</b>\n"
+            f"🎯 הגרלה מטרה: <b>#{p.get('target_draw_number', '—')}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"♠️ עלה (Spade):  <b>{p.get('main_spade', '—')}</b>\n"
+            f"❤️ לב (Heart):  <b>{p.get('main_heart', '—')}</b>\n"
+            f"♦️ יהלום (Diamond): <b>{p.get('main_diamond', '—')}</b>\n"
+            f"♣️ תלתן (Club):  <b>{p.get('main_club', '—')}</b>\n\n"
+            f"✨ <i>החיזוקים והשיטות המלאות זמינים במנוי ה-VIP!</i>\n"
+            f"<i>⬡ Chance AI Predictor</i>")
+
+def build_vip_predictions(predictions):
+    if not predictions: return "❌ אין נתונים זמינים."
+    
+    # מוצאים את מספר ההגרלה העדכני ביותר בטבלה
+    latest_draw = predictions[0].get("target_draw_number")
+    current_preds = [p for p in predictions if p.get("target_draw_number") == latest_draw]
+    
+    msg = f"🔮 <b>ריכוז חיזויים מורחב להגרלה #{latest_draw}</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # מיפוי השמות של 4 השיטות שלך
+    methods_map = {
+        "Human": "🥇 Quantum Human v5.0 (הכי מדויק)",
+        "Baseline": "🥈 Baseline v5.1",
+        "Hybrid": "🥉 Hybrid v6",
+        "MirrorReverse": "🔄 Mirror Reverse Theory"
+    }
+    
+    for m_key, m_name in methods_map.items():
+        match = [p for p in current_preds if p.get("method") == m_key]
+        if match:
+            p = match[0]
+            msg += (f"<b>{m_name}:</b>\n"
+                    f"• ראשי: ♠️{p.get('main_spade','')} ❤️{p.get('main_heart','')} ♦️{p.get('main_diamond','')} ♣️{p.get('main_club','')}\n"
+                    f"• חיזוקים: {p.get('strong_cards', 'אין')}\n\n")
+            
+    msg += "⚠️ <i>השתמש במידע באחריותך בלבד. בהצלחה!</i>\n<i>⬡ Chance AI VIP</i>"
+    return msg
+
+def build_last_draws(draws):
+    if not draws: return "❌ לא נמצאו הגרלות קודמות."
+    msg = "🎰 <b>תוצאות 10 הגרלות אחרונות</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    for d in draws:
+        msg += f"<b>הגרלה #{d.get('draw_number')}</b>: ♠️{d.get('spade')} ❤️{d.get('heart')} ♦️{d.get('diamond')} ♣️{d.get('club')}\n"
+    msg += "\n<i>⬡ Chance AI Predictor</i>"
+    return msg
+
+# ═══════════════════════════════════════════
+# תפריטים (מעודכנים עבור אפליקציית הצ'אנס)
+# ═══════════════════════════════════════════
+def main_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ המלצה חינם",        callback_data="free_recommendation"),
+         InlineKeyboardButton("🔮 חיזוי VIP (כל 4 השיטות)", callback_data="vip_signals")],
+        [InlineKeyboardButton("🎰 10 הגרלות אחרונות",   callback_data="last_draws")],
+        [InlineKeyboardButton("👑 רכישת מנוי VIP",      callback_data="subscribe"),
+         InlineKeyboardButton("👥 חבר מביא חבר",       callback_data="referral")],
+        [InlineKeyboardButton("ℹ️ עזרה",                callback_data="help")],
     ])
-    await update.message.reply_html(
-        "💳 <b>רכישת מנוי פרמיום</b>\n\n"
-        "👑 <b>מה כלול:</b>\n"
-        "• 4 מודלי חיזוי מלאים\n"
-        "• ניתוח מועצה (דן, רון, מיכאל, אלון)\n"
-        "• קלפים חמים/קרים\n"
-        "• עדכונים לפני כל הגרלה\n\n"
-        "בחר תכנית:",
-        reply_markup=keyboard
-    )
 
-async def handle_free_prediction(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    today = datetime.now().strftime("%Y-%m-%d")
+def sub_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🆓 ניסיון חינמי — 3 ימים",  callback_data="plan_trial")],
+        [InlineKeyboardButton("📅 מנוי חודשי — ₪300",       callback_data="plan_monthly")],
+        [InlineKeyboardButton("🏆 מנוי שנתי — ₪3,000",      callback_data="plan_yearly")],
+        [InlineKeyboardButton("🔙 חזרה",                     callback_data="menu")],
+    ])
 
-    if FREE_PRED_USED.get(user_id) == today and user_id != OWNER_ID:
-        await update.message.reply_html(
-            "⭐ <b>המלצה חינם</b>\n\n"
-            "⏰ כבר קיבלת את החיזוי החינמי שלך היום!\n\n"
-            "לחיזויים מלאים לפני <b>כל הגרלה</b> + ניתוח מועצה מלא 👑\n"
-            "לחץ על 💳 <b>רכישת מנוי</b>"
-        )
+def pay_menu(plan_key):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 ביט",           callback_data=f"pay_bit_{plan_key}")],
+        [InlineKeyboardButton("💳 פייבוקס",       callback_data=f"pay_paybox_{plan_key}")],
+        [InlineKeyboardButton("🏦 העברה בנקאית", callback_data=f"pay_bank_{plan_key}")],
+        [InlineKeyboardButton("🔙 חזרה",          callback_data="subscribe")],
+    ])
+
+def back_menu():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 תפריט ראשי", callback_data="menu")]])
+
+def no_sub_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👑 הצטרף ל-VIP עכשיו", callback_data="subscribe")],
+        [InlineKeyboardButton("🔙 תפריט",       callback_data="menu")],
+    ])
+
+def action_menu(action):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 רענן",        callback_data=action),
+         InlineKeyboardButton("🔙 תפריט",       callback_data="menu")]
+    ])
+
+# ── בדיקת גישה לתוכן VIP ──
+async def check_access(update, ctx, callback=False):
+    uid = update.effective_user.id
+    if is_blocked(uid) and not is_admin(uid):
+        security_log("BLOCKED_ATTEMPT", uid)
+        msg = "🚫 הגישה שלך נחסמה. פנה לתמיכה."
+        if callback: await update.callback_query.answer(msg, show_alert=True)
+        else: await update.message.reply_text(msg)
+        return False
+
+    if is_subscribed(uid): return True
+
+    security_log("NO_SUB_ATTEMPT", uid)
+    msg = ("🔒 <b>תוכן זה זמין למנויי VIP בלבד</b>\n\n"
+           "פתח גישה לכל 4 שיטות החיזוי והחיזוקים בזמן אמת:\n"
+           "🆓 ניסיון חינמי 3 ימים\n"
+           "📅 מנוי חודשי ₪300\n"
+           "🏆 מנוי שנתי ₪3,000\n\n"
+           "לחץ להצטרפות ↓")
+    if callback: await update.callback_query.edit_message_text(msg, parse_mode="HTML", reply_markup=no_sub_menu())
+    else: await update.message.reply_text(msg, parse_mode="HTML", reply_markup=no_sub_menu())
+    return False
+
+# ═══════════════════════════════════════════
+# פקודות
+# ═══════════════════════════════════════════
+async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid   = update.effective_user.id
+    uname = update.effective_user.username or update.effective_user.first_name or "משתמש"
+
+    if is_blocked(uid) and not is_admin(uid):
+        await update.message.reply_text("🚫 הגישה שלך נחסמה. פנה לתמיכה.")
         return
 
-    FREE_PRED_USED[user_id] = today
-    pred = get_prediction_from_github()
+    # הפניות חברים
+    args = ctx.args
+    if args and args[0].startswith("REF"):
+        referrer_id = args[0][3:]
+        if str(referrer_id) != str(uid):
+            count = add_referral(referrer_id, uid)
+            if count > 0 and count % 2 == 0:
+                add_subscription(int(referrer_id), "", "monthly", 30)
+                try:
+                    await ctx.bot.send_message(
+                        chat_id=int(referrer_id),
+                        text=("🎉 <b>מזל טוב!</b>\n\nצירפת 2 חברים — קיבלת <b>חודש VIP חינמי!</b>\n\n"
+                              f"תוקף חדש: {get_expiry_str(referrer_id)}\n\n<i>⬡ Chance AI</i>"),
+                        parse_mode="HTML"
+                    )
+                except: pass
 
-    if pred and pred.get("draw"):
-        baseline = pred.get("baseline", {})
-        await update.message.reply_html(
-            f"⭐ <b>חיזוי חינם יומי</b>\n"
-            f"<i>Baseline — ללא ניתוח מועצה</i>\n\n"
-            f"🎯 הגרלה מס' <b>{pred.get('draw','?')}</b>\n\n"
-            f"♠️ עלה:   <b>{baseline.get('spade','?')}</b>\n"
-            f"❤️ לב:    <b>{baseline.get('heart','?')}</b>\n"
-            f"♦️ יהלום: <b>{baseline.get('diamond','?')}</b>\n"
-            f"♣️ תלתן:  <b>{baseline.get('club','?')}</b>\n\n"
-            f"🔒 לחיזוי מלא + ניתוח מועצה לפני <b>כל הגרלה</b>\n"
-            f"שדרג ל-👑 פרמיום!"
-        )
-    else:
-        await update.message.reply_html(
-            "⭐ <b>חיזוי חינם</b>\n\n"
-            "⏳ החיזוי הבא עוד לא זמין — יתעדכן לפני ההגרלה הבאה.\n\n"
-            "🔔 לקבלת עדכונים מיידיים שדרג ל-👑 פרמיום!"
-        )
+    db = load_db()
+    if str(uid) not in db["users"]:
+        db["users"][str(uid)] = {
+            "user_id": uid, "username": uname, "plan": None, "expiry": None,
+            "joined": datetime.now().isoformat(), "trial_used": False, "referrals_count": 0, "referral_code": f"REF{uid}",
+        }
+        save_db(db)
+        security_log("NEW_USER", uid, f"username={uname}")
 
-async def handle_last_10(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not is_premium(user_id):
-        await update.message.reply_html(
-            "🎰 <b>10 הגרלות האחרונות</b>\n\n"
-            "🔒 תוכן זה זמין <b>למנויים בלבד</b>\n\n"
-            "לחץ על 💳 <b>רכישת מנוי</b> לגישה מלאה 👑"
-        )
+    sub    = is_subscribed(uid)
+    status = f"👑 מנוי VIP פעיל עד: {get_expiry_str(uid)}" if sub else "❌ אין מנוי VIP פעיל"
+
+    await update.message.reply_text(
+        f"⬡ <b>Chance AI Predictor</b>\n\nברוך הבא! 👋\n{status}\n\nבחר פעולה מהתפריט:",
+        parse_mode="HTML", reply_markup=main_menu()
+    )
+
+async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        record_attempt(update.effective_user.id)
         return
-
-    pred = get_prediction_from_github()
-    if pred and pred.get("draw"):
-        baseline = pred.get("baseline", {})
-        await update.message.reply_html(
-            f"🎰 <b>חיזוי אחרון</b>\n\n"
-            f"🔹 <b>#{pred.get('draw','?')}</b>\n"
-            f"♠️ עלה: {baseline.get('spade','?')}\n"
-            f"❤️ לב: {baseline.get('heart','?')}\n"
-            f"♦️ יהלום: {baseline.get('diamond','?')}\n"
-            f"♣️ תלתן: {baseline.get('club','?')}\n\n"
-            f"<i>נתונים נוספים בקרוב...</i>"
-        )
-    else:
-        await update.message.reply_html("❌ לא ניתן לטעון נתונים כרגע.")
-
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data == "buy_monthly":
-        await query.message.reply_html(
-            "💳 <b>תשלום — מנוי חודשי (250₪)</b>\n\n"
-            "1️⃣ בצע העברה בנקאית / ביט / פייבוקס\n"
-            "2️⃣ שלח <b>צילום מסך</b> של ההעברה כאן\n"
-            "3️⃣ המנוי יופעל תוך 24 שעות ✅"
-        )
-        context.user_data["plan"] = "monthly"
-        context.user_data["price"] = 250
-
-    elif data == "buy_yearly":
-        await query.message.reply_html(
-            "💳 <b>תשלום — מנוי שנתי (2,500₪)</b>\n\n"
-            "1️⃣ בצע העברה בנקאית / ביט / פייבוקס\n"
-            "2️⃣ שלח <b>צילום מסך</b> של ההעברה כאן\n"
-            "3️⃣ המנוי יופעל תוך 24 שעות ✅"
-        )
-        context.user_data["plan"] = "yearly"
-        context.user_data["price"] = 2500
-
-    elif data.startswith("approve_"):
-        parts = data.split("_")
-        user_id = int(parts[1])
-        plan = parts[2] if len(parts) > 2 else "monthly"
-        PREMIUM_USERS.add(user_id)
-        await context.bot.send_message(
-            chat_id=user_id,
-            text="🎉 <b>המנוי הופעל!</b>\n👑 ברוך הבא לפרמיום!\nגישה מלאה לכל הפיצ'רים 🚀",
-            parse_mode="HTML",
-            reply_markup=main_menu(premium=True)
-        )
-        try:
-            await query.edit_message_caption(
-                caption=query.message.caption + "\n\n✅ <b>אושר!</b>",
-                parse_mode="HTML"
-            )
-        except Exception:
-            await query.message.reply_html("✅ המנוי אושר!")
-
-    elif data.startswith("reject_"):
-        user_id = int(data.split("_")[1])
-        await context.bot.send_message(
-            chat_id=user_id,
-            text="❌ <b>ההוכחה לא אושרה.</b>\nלבירורים לחץ על 📞 יצירת קשר",
-            parse_mode="HTML"
-        )
-        try:
-            await query.edit_message_caption(
-                caption=query.message.caption + "\n\n❌ <b>נדחה</b>",
-                parse_mode="HTML"
-            )
-        except Exception:
-            await query.message.reply_html("❌ הבקשה נדחתה.")
-
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    plan = context.user_data.get("plan", "monthly")
-    price = context.user_data.get("price", 250)
-    file_id = update.message.photo[-1].file_id
-
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ אשר מנוי", callback_data=f"approve_{user.id}_{plan}"),
-        InlineKeyboardButton("❌ דחה", callback_data=f"reject_{user.id}")
-    ]])
-
-    caption = (
-        f"💳 <b>בקשת מנוי חדשה!</b>\n"
-        f"👤 {user.first_name} {user.last_name or ''}\n"
-        f"🆔 {user.id}\n"
-        f"📱 @{user.username or 'אין'}\n"
-        f"📅 {'חודשי' if plan == 'monthly' else 'שנתי'} — {price}₪"
-    )
-
-    await context.bot.send_photo(
-        chat_id=OWNER_ID,
-        photo=file_id,
-        caption=caption,
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
-    await update.message.reply_html(
-        "✅ <b>תודה! ההוכחה התקבלה.</b>\n"
-        "המנוי יופעל תוך 24 שעות לאחר אישור 🎉"
-    )
-
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text or ""
-    user_id = update.effective_user.id
-    premium = is_premium(user_id)
-
-    if "רכישת" in text or "💳" in text:
-        await handle_buy(update, context)
-    elif "מנוי" in text and "רכישת" not in text:
-        await handle_buy(update, context)
-    elif "המלצה" in text or "⭐" in text:
-        await handle_free_prediction(update, context)
-    elif "10 הגרלות" in text or "🎰" in text:
-        await handle_last_10(update, context)
-    elif "פרמיום" in text or "👑" in text or "VIP" in text or "אזור" in text:
-        if premium:
-            await update.message.reply_html("👑 <b>אזור VIP</b>\n\nהמנוי שלך פעיל! גישה מלאה לכל הפיצ'רים ✅")
-        else:
-            await update.message.reply_html("🔒 <b>אזור VIP — מנויים בלבד</b>\n\nלחץ על 💳 <b>רכישת מנוי</b> להצטרפות!")
-    elif "חבר" in text or "👥" in text:
-        ref_link = f"https://t.me/CHANCEAihaybot?start=ref_{user_id}"
-        await update.message.reply_html(
-            f"👥 <b>חבר מביא חבר!</b>\n\n"
-            f"שתף את הלינק שלך:\n<code>{ref_link}</code>\n\n"
-            f"🎁 על כל <b>2 חברים</b> שמשלמים — חודש חינם!"
-        )
-    elif "שאלות" in text or "❓" in text:
-        await update.message.reply_html(
-            "❓ <b>שאלות ותשובות</b>\n\n"
-            "🔹 <b>מחיר?</b> 250₪/חודש | 2,500₪/שנה\n"
-            "🔹 <b>איך מקבלים חיזוי?</b> לחץ ⭐ המלצה חינם\n"
-            "🔹 <b>מתי מתעדכנים חיזויים?</b> לפני כל הגרלה\n"
-            "🔹 <b>שאלה אחרת?</b> לחץ 📞 יצירת קשר"
-        )
-    elif "קשר" in text or "📞" in text:
-        await update.message.reply_html(
-            "📞 <b>יצירת קשר</b>\n\n"
-            "לכל שאלה או בעיה — פנה ישירות:\n"
-            "👤 @yhaim5430_droid\n\n"
-            "⏰ זמן תגובה: עד 24 שעות"
-        )
-    else:
-        await update.message.reply_html(
-            "👇 בחר אפשרות מהתפריט",
-            reply_markup=main_menu(premium)
-        )
-
-# ========== הפעלה ==========
-def main():
-    if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN לא מוגדר!")
-
-    # הפעל את שרת ה-HTTP בthread נפרד
-    health_thread = threading.Thread(target=run_health_server, daemon=True)
-    health_thread.start()
-    logging.info("Health server thread started")
-
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-    logging.info("🤖 בוט מופעל עם HTTP health server!")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    main()
+    db     = load_db()
+    users  = db["users"]
+    pend   = db
