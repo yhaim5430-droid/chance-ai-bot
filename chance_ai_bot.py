@@ -1,389 +1,202 @@
 import os
-import requests
 import telebot
+import requests
 from telebot import types
 
-# =========================================
-# CONFIG
-# =========================================
+# ================= CONFIG =================
 
-TOKEN = os.getenv("TG_TOKEN") or os.getenv("BOT_TOKEN")
+TOKEN = os.getenv("TG_TOKEN")
+BASE44_API_KEY = os.getenv("CHANCE_API_KEY")
+BASE44_APP_ID = os.getenv("CHANCE_APP_ID")
 
 if not TOKEN:
-    raise ValueError("❌ TG_TOKEN חסר")
+    raise Exception("❌ חסר TG_TOKEN")
 
-CHANCE_APP_ID = os.getenv("CHANCE_APP_ID")
-CHANCE_API_KEY = os.getenv("CHANCE_API_KEY")
+if not BASE44_API_KEY:
+    raise Exception("❌ חסר CHANCE_API_KEY")
 
-if not CHANCE_APP_ID:
-    raise ValueError("❌ CHANCE_APP_ID חסר")
-
-if not CHANCE_API_KEY:
-    raise ValueError("❌ CHANCE_API_KEY חסר")
-
-# חשוב:
-# החלף לכתובת API האמיתית שלך מ-Base44
-BASE_URL = f"https://api.base44.com/v1"
+if not BASE44_APP_ID:
+    raise Exception("❌ חסר CHANCE_APP_ID")
 
 bot = telebot.TeleBot(TOKEN)
 
-print("🚀 Chance AI Bot Started")
+BASE_URL = f"https://app.base44.com/api/apps/{BASE44_APP_ID}"
 
-# =========================================
-# MENU
-# =========================================
+HEADERS = {
+    "api_key": BASE44_API_KEY,
+    "Content-Type": "application/json"
+}
+
+# ================= MENU =================
 
 def main_menu():
-    markup = types.ReplyKeyboardMarkup(
-        row_width=2,
-        resize_keyboard=True
-    )
-
-    markup.add(
-        "🔮 תחזית",
-        "🎰 הגרלות"
-    )
-
-    markup.add(
-        "🎯 Accuracy",
-        "ℹ️ על הבוט"
-    )
-
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("🎯 תחזית אחרונה", "🎰 הגרלות")
+    markup.row("📊 Accuracy", "ℹ️ על הבוט")
     return markup
 
-# =========================================
-# BASE44 API
-# =========================================
-
-def get_headers():
-    return {
-        "appId": CHANCE_APP_ID,
-        "api_key": CHANCE_API_KEY,
-        "Content-Type": "application/json"
-    }
-
-# =========================================
-# FETCH FUNCTIONS
-# =========================================
-
-def fetch_predictions():
-
-    url = f"{BASE_URL}/entities/Prediction"
-
-    params = {
-        "sort_by": "-created_date",
-        "limit": 1
-    }
-
-    try:
-
-        response = requests.get(
-            url,
-            headers=get_headers(),
-            params=params,
-            timeout=15
-        )
-
-        print("Prediction Status:", response.status_code)
-
-        if response.status_code != 200:
-            print(response.text)
-            return []
-
-        data = response.json()
-
-        if isinstance(data, list):
-            return data
-
-        if isinstance(data, dict):
-
-            if "records" in data:
-                return data["records"]
-
-            if "data" in data:
-                return data["data"]
-
-            if "results" in data:
-                return data["results"]
-
-        return []
-
-    except Exception as e:
-        print("Prediction Error:", e)
-        return []
-
-
-def fetch_draws():
-
-    url = f"{BASE_URL}/entities/Draw"
-
-    params = {
-        "sort_by": "-draw_number",
-        "limit": 10
-    }
-
-    try:
-
-        response = requests.get(
-            url,
-            headers=get_headers(),
-            params=params,
-            timeout=15
-        )
-
-        print("Draw Status:", response.status_code)
-
-        if response.status_code != 200:
-            print(response.text)
-            return []
-
-        data = response.json()
-
-        if isinstance(data, list):
-            return data
-
-        if isinstance(data, dict):
-
-            if "records" in data:
-                return data["records"]
-
-            if "data" in data:
-                return data["data"]
-
-            if "results" in data:
-                return data["results"]
-
-        return []
-
-    except Exception as e:
-        print("Draw Error:", e)
-        return []
-
-
-def fetch_accuracy():
-
-    url = f"{BASE_URL}/entities/PredictionResult"
-
-    params = {
-        "sort_by": "-draw_number",
-        "limit": 10
-    }
-
-    try:
-
-        response = requests.get(
-            url,
-            headers=get_headers(),
-            params=params,
-            timeout=15
-        )
-
-        print("Accuracy Status:", response.status_code)
-
-        if response.status_code != 200:
-            print(response.text)
-            return []
-
-        data = response.json()
-
-        if isinstance(data, list):
-            return data
-
-        if isinstance(data, dict):
-
-            if "records" in data:
-                return data["records"]
-
-            if "data" in data:
-                return data["data"]
-
-            if "results" in data:
-                return data["results"]
-
-        return []
-
-    except Exception as e:
-        print("Accuracy Error:", e)
-        return []
-
-# =========================================
-# START
-# =========================================
+# ================= START =================
 
 @bot.message_handler(commands=['start'])
 def start(message):
-
     bot.send_message(
         message.chat.id,
-        "🤖 *Chance AI Bot*\n\n"
-        "ברוך הבא למערכת התחזיות 🎰\n\n"
-        "בחר אפשרות:",
-        parse_mode="Markdown",
+        "♣️♦️ CHANCE PREDICTOR ♠️♥️\n\nברוך הבא למערכת התחזיות",
         reply_markup=main_menu()
     )
 
-# =========================================
-# MESSAGES
-# =========================================
+# ================= PREDICTION =================
 
-@bot.message_handler(func=lambda message: True)
-def handle_messages(message):
+@bot.message_handler(func=lambda m: m.text == "🎯 תחזית אחרונה")
+def latest_prediction(message):
 
-    text = message.text.strip()
+    try:
+        url = f"{BASE_URL}/entities/Prediction?limit=1&sort_by=-created_date"
 
-    # =====================================
-    # PREDICTION
-    # =====================================
+        response = requests.get(url, headers=HEADERS)
 
-    if text == "🔮 תחזית":
-
-        predictions = fetch_predictions()
-
-        if not predictions:
-
-            bot.send_message(
-                message.chat.id,
-                "❌ אין תחזיות כרגע\n\n"
-                "או שיש בעיית חיבור ל-Base44",
-                reply_markup=main_menu()
-            )
-
+        if response.status_code != 200:
+            bot.send_message(message.chat.id, f"❌ API ERROR {response.status_code}")
             return
 
-        p = predictions[0]
+        data = response.json()
 
-        msg = (
-            f"🔮 *Chance AI Prediction*\n\n"
-
-            f"🎯 הגרלה: #{p.get('target_draw_number', '—')}\n\n"
-
-            f"♠️ ספייד: *{p.get('main_spade', '—')}*\n"
-            f"❤️ לב: *{p.get('main_heart', '—')}*\n"
-            f"♦️ יהלום: *{p.get('main_diamond', '—')}*\n"
-            f"♣️ תלתן: *{p.get('main_club', '—')}*\n\n"
-
-            f"✨ חיזוק 1: {p.get('reinforcement_1', '—')}\n"
-            f"✨ חיזוק 2: {p.get('reinforcement_2', '—')}\n\n"
-
-            f"🤖 מודל: {p.get('method', 'Quantum')}"
-        )
-
-        bot.send_message(
-            message.chat.id,
-            msg,
-            parse_mode="Markdown",
-            reply_markup=main_menu()
-        )
-
-    # =====================================
-    # DRAWS
-    # =====================================
-
-    elif text == "🎰 הגרלות":
-
-        draws = fetch_draws()
-
-        if not draws:
-
-            bot.send_message(
-                message.chat.id,
-                "❌ אין נתוני הגרלות",
-                reply_markup=main_menu()
-            )
-
+        if not data:
+            bot.send_message(message.chat.id, "❌ אין תחזיות כרגע")
             return
 
-        msg = "🎰 *10 הגרלות אחרונות*\n\n"
+        p = data[0]
 
-        for d in draws:
+        text = f"""
+🎯 תחזית אחרונה
 
-            msg += (
-                f"#{d.get('draw_number', '—')} → "
-                f"♠️{d.get('spade', '—')} "
-                f"❤️{d.get('heart', '—')} "
-                f"♦️{d.get('diamond', '—')} "
-                f"♣️{d.get('club', '—')}\n"
-            )
+🎰 הגרלה: {p.get('target_draw_number')}
 
-        bot.send_message(
-            message.chat.id,
-            msg,
-            parse_mode="Markdown",
-            reply_markup=main_menu()
-        )
+♠️ ספייד: {p.get('main_spade')}
+♥️ לב: {p.get('main_heart')}
+♦️ יהלום: {p.get('main_diamond')}
+♣️ תלתן: {p.get('main_club')}
 
-    # =====================================
-    # ACCURACY
-    # =====================================
+🔥 חיזוקים:
+{p.get('reinforcement_1')}
+{p.get('reinforcement_2')}
 
-    elif text == "🎯 Accuracy":
+📈 שיטה:
+{p.get('method')}
+"""
 
-        results = fetch_accuracy()
+        bot.send_message(message.chat.id, text)
 
-        if not results:
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ ERROR\n{e}")
 
-            bot.send_message(
-                message.chat.id,
-                "❌ אין נתוני Accuracy",
-                reply_markup=main_menu()
-            )
+# ================= DRAWS =================
 
+@bot.message_handler(func=lambda m: m.text == "🎰 הגרלות")
+def latest_draws(message):
+
+    try:
+        url = f"{BASE_URL}/entities/Draw?limit=5&sort_by=-draw_number"
+
+        response = requests.get(url, headers=HEADERS)
+
+        if response.status_code != 200:
+            bot.send_message(message.chat.id, f"❌ API ERROR {response.status_code}")
             return
 
-        msg = "🎯 *Prediction Accuracy*\n\n"
+        data = response.json()
 
-        for r in results:
+        if not data:
+            bot.send_message(message.chat.id, "❌ אין נתוני הגרלות")
+            return
 
-            msg += (
-                f"#{r.get('draw_number', '—')} | "
-                f"{r.get('method', '—')} | "
-                f"Hits: {r.get('hit_count', 0)}/4\n"
-            )
+        text = "🎰 5 הגרלות אחרונות\n\n"
 
-        bot.send_message(
-            message.chat.id,
-            msg,
-            parse_mode="Markdown",
-            reply_markup=main_menu()
-        )
+        for d in data:
+            text += f"""
+#{d.get('draw_number')}
 
-    # =====================================
-    # ABOUT
-    # =====================================
+♠️ {d.get('spade')}
+♥️ {d.get('heart')}
+♦️ {d.get('diamond')}
+♣️ {d.get('club')}
 
-    elif text == "ℹ️ על הבוט":
+"""
 
-        bot.send_message(
-            message.chat.id,
-            "🤖 *Chance AI Bot*\n\n"
-            "מערכת תחזיות צ'אנס חכמה\n"
-            "מבוססת Base44\n\n"
-            "פותח על ידי חיים 🚀",
-            parse_mode="Markdown",
-            reply_markup=main_menu()
-        )
+        bot.send_message(message.chat.id, text)
 
-    # =====================================
-    # UNKNOWN
-    # =====================================
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ ERROR\n{e}")
 
-    else:
+# ================= ACCURACY =================
 
-        bot.send_message(
-            message.chat.id,
-            "❌ לא הבנתי\nבחר אפשרות מהתפריט",
-            reply_markup=main_menu()
-        )
+@bot.message_handler(func=lambda m: m.text == "📊 Accuracy")
+def accuracy(message):
 
-# =========================================
-# RUN
-# =========================================
+    try:
+        url = f"{BASE_URL}/entities/PredictionResult?limit=20"
 
-if __name__ == "__main__":
+        response = requests.get(url, headers=HEADERS)
 
-    print("✅ BOT IS RUNNING")
+        if response.status_code != 200:
+            bot.send_message(message.chat.id, f"❌ API ERROR {response.status_code}")
+            return
 
-    bot.infinity_polling(
-        timeout=30,
-        long_polling_timeout=30
+        data = response.json()
+
+        if not data:
+            bot.send_message(message.chat.id, "❌ אין נתוני Accuracy")
+            return
+
+        total = len(data)
+        hits = sum([x.get("hit_count", 0) for x in data])
+
+        avg = round(hits / total, 2)
+
+        text = f"""
+📊 Accuracy Report
+
+בדיקות: {total}
+
+סה"כ פגיעות: {hits}
+
+ממוצע פגיעות: {avg}
+"""
+
+        bot.send_message(message.chat.id, text)
+
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ ERROR\n{e}")
+
+# ================= ABOUT =================
+
+@bot.message_handler(func=lambda m: m.text == "ℹ️ על הבוט")
+def about(message):
+
+    text = """
+🤖 Chance AI Bot
+
+מערכת תחזיות צ'אנס חכמה
+מבוססת Base44
+
+פותח על ידי חיים 🚀
+"""
+
+    bot.send_message(message.chat.id, text)
+
+# ================= OTHER =================
+
+@bot.message_handler(func=lambda m: True)
+def other(message):
+
+    bot.send_message(
+        message.chat.id,
+        "❌ לא הבנתי\nבחר אפשרות מהתפריט",
+        reply_markup=main_menu()
     )
+
+# ================= RUN =================
+
+print("🚀 Bot Starting...")
+
+bot.infinity_polling(skip_pending=True)
