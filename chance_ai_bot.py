@@ -495,3 +495,14 @@ def main():
 
 if __name__ == "__main__":
     main()
+async def test_base44():
+    print("בודק חיבור...")
+
+    try:
+        result = await make_base44_request("Draw")
+        print("תוצאה:")
+        print(result)
+
+    except Exception as e:
+        print("שגיאה:")
+        print(e)
