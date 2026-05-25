@@ -1,7 +1,6 @@
 ```python
 import os
 import json
-import asyncio
 import aiohttp
 
 from datetime import datetime
@@ -53,7 +52,7 @@ def save_db(db):
 
 
 # ════════════════════════════════
-# API
+# BASE44 API
 # ════════════════════════════════
 
 async def make_base44_request(entity_name, params=None):
@@ -87,8 +86,10 @@ async def make_base44_request(entity_name, params=None):
 
                 if response.status != 200:
                     text = await response.text()
+
                     print(f"❌ API ERROR {response.status}")
                     print(text)
+
                     return []
 
                 data = await response.json()
@@ -288,8 +289,6 @@ async def callback_handler(
 
     data = query.data
 
-    # ─────────────────────────
-
     if data == "prediction":
 
         await query.edit_message_text(
@@ -307,8 +306,6 @@ async def callback_handler(
             reply_markup=main_menu()
         )
 
-    # ─────────────────────────
-
     elif data == "draws":
 
         await query.edit_message_text(
@@ -323,8 +320,6 @@ async def callback_handler(
             text,
             reply_markup=main_menu()
         )
-
-    # ─────────────────────────
 
     elif data == "hits":
 
