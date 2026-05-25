@@ -1,10 +1,17 @@
+```python
 import os
-import asyncio
 import json
+import asyncio
 import aiohttp
+
 from datetime import datetime
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -14,22 +21,20 @@ from telegram.ext import (
     filters,
 )
 
-# =========================
+# ════════════════════════════════
 # ENV
-# =========================
+# ════════════════════════════════
 
 TG_TOKEN = os.getenv("TG_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-CHAT_ID = os.getenv("CHAT_ID", "")
 
 CHANCE_APP_ID = os.getenv("CHANCE_APP_ID")
 CHANCE_API_KEY = os.getenv("CHANCE_API_KEY")
 
 BASE_URL = "https://api.base44.com/v1"
 
-# =========================
-# DB
-# =========================
+# ════════════════════════════════
+# DATABASE
+# ════════════════════════════════
 
 DB_FILE = "users.json"
 
@@ -47,11 +52,15 @@ def save_db(db):
         json.dump(db, f, ensure_ascii=False, indent=2)
 
 
-# =========================
-# BASE44 API
-# =========================
+# ════════════════════════════════
+# API
+# ════════════════════════════════
 
 async def make_base44_request(entity_name, params=None):
+
+    if not CHANCE_APP_ID or not CHANCE_API_KEY:
+        print("❌ Missing Base44 credentials")
+        return []
 
     headers = {
         "appId": CHANCE_APP_ID,
@@ -61,151 +70,334 @@ async def make_base44_request(entity_name, params=None):
 
     url = f"{BASE_URL}/entities/{entity_name}"
 
+    print(f"📡 REQUEST: {url}")
+
     try:
+
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, params=params) as response:
+
+            async with session.get(
+                url,
+                headers=headers,
+                params=params,
+                timeout=20
+            ) as response:
+
+                print(f"📡 STATUS: {response.status}")
 
                 if response.status != 200:
+                    text = await response.text()
                     print(f"❌ API ERROR {response.status}")
+                    print(text)
                     return []
 
                 data = await response.json()
+
+                print("✅ API SUCCESS")
 
                 if isinstance(data, list):
                     return data
 
                 if isinstance(data, dict):
-                    return data.get("records") or data.get("data") or data.get("results") or []
+
+                    if "records" in data:
+                        return data["records"]
+
+                    if "data" in data:
+                        return data["data"]
+
+                    if "results" in data:
+                        return data["results"]
 
                 return []
 
     except Exception as e:
-        print(f"❌ ERROR: {e}")
+        print(f"❌ BASE44 ERROR: {e}")
         return []
 
 
 async def fetch_predictions():
-    return await make_base44_request("Prediction", {
-        "sort_by": "-created_date",
-        "limit": "10"
-    })
+
+    return await make_base44_request(
+        "Prediction",
+        {
+            "sort_by": "-created_date",
+            "limit": "10"
+        }
+    )
 
 
 async def fetch_draws():
-    return await make_base44_request("Draw", {
-        "sort_by": "-draw_number",
-        "limit": "10"
-    })
+
+    return await make_base44_request(
+        "Draw",
+        {
+            "sort_by": "-draw_number",
+            "limit": "10"
+        }
+    )
 
 
-async def fetch_results():
-    return await make_base44_request("PredictionResult", {
-        "sort_by": "-draw_number",
-        "limit": "10"
-    })
+async def fetch_hits():
+
+    return await make_base44_request(
+        "PredictionResult",
+        {
+            "sort_by": "-draw_number",
+            "limit": "10"
+        }
+    )
 
 
-# =========================
-# UI
-# =========================
+# ════════════════════════════════
+# BUILDERS
+# ════════════════════════════════
+
+def build_prediction_message(records):
+
+    if not records:
+        return "❌ אין תחזיות"
+
+    p = records[0]
+
+    return (
+        f"🔮 תחזית אחרונה\n\n"
+
+        f"🎯 הגרלה #{p.get('target_draw_number', '—')}\n\n"
+
+        f"♠️ {p.get('main_spade', '—')}\n"
+        f"❤️ {p.get('main_heart', '—')}\n"
+        f"♦️ {p.get('main_diamond', '—')}\n"
+        f"♣️ {p.get('main_club', '—')}\n\n"
+
+        f"✨ {p.get('reinforcement_1', '—')}\n"
+        f"✨ {p.get('reinforcement_2', '—')}"
+    )
+
+
+def build_draws_message(records):
+
+    if not records:
+        return "❌ אין הגרלות"
+
+    text = "🎰 10 הגרלות אחרונות\n\n"
+
+    for d in records:
+
+        text += (
+            f"#{d.get('draw_number', '—')} | "
+            f"♠️{d.get('spade', '—')} "
+            f"❤️{d.get('heart', '—')} "
+            f"♦️{d.get('diamond', '—')} "
+            f"♣️{d.get('club', '—')}\n"
+        )
+
+    return text
+
+
+def build_hits_message(records):
+
+    if not records:
+        return "❌ אין נתונים"
+
+    text = "🎯 Accuracy\n\n"
+
+    for r in records:
+
+        text += (
+            f"#{r.get('draw_number', '—')} "
+            f"| Hits {r.get('hit_count', 0)}/4\n"
+        )
+
+    return text
+
+
+# ════════════════════════════════
+# MENU
+# ════════════════════════════════
 
 def main_menu():
+
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🔮 תחזית", callback_data="prediction"),
-            InlineKeyboardButton("🎰 הגרלות", callback_data="draws"),
+            InlineKeyboardButton(
+                "🔮 תחזית",
+                callback_data="prediction"
+            ),
+
+            InlineKeyboardButton(
+                "🎰 הגרלות",
+                callback_data="draws"
+            )
         ],
+
         [
-            InlineKeyboardButton("🎯 Accuracy", callback_data="hits"),
+            InlineKeyboardButton(
+                "🎯 Accuracy",
+                callback_data="hits"
+            )
         ]
     ])
 
 
-# =========================
-# HANDLERS
-# =========================
+# ════════════════════════════════
+# START
+# ════════════════════════════════
 
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    user = update.effective_user
+
+    db = load_db()
+
+    if str(user.id) not in db["users"]:
+
+        db["users"][str(user.id)] = {
+            "id": user.id,
+            "name": user.first_name,
+            "joined": datetime.now().isoformat()
+        }
+
+        save_db(db)
+
     await update.message.reply_text(
-        "🤖 Chance AI Bot\nלחץ על כפתור:",
+        (
+            f"🤖 Chance AI Bot\n\n"
+            f"שלום {user.first_name}\n\n"
+            f"בחר אפשרות:"
+        ),
         reply_markup=main_menu()
     )
 
 
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ════════════════════════════════
+# CALLBACKS
+# ════════════════════════════════
+
+async def callback_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     query = update.callback_query
+
     await query.answer()
 
-    if query.data == "prediction":
-        data = await fetch_predictions()
-        await query.edit_message_text(f"🔮 תחזיות:\n{data}", reply_markup=main_menu())
+    data = query.data
 
-    elif query.data == "draws":
-        data = await fetch_draws()
-        await query.edit_message_text(f"🎰 הגרלות:\n{data}", reply_markup=main_menu())
+    # ─────────────────────────
 
-    elif query.data == "hits":
-        data = await fetch_results()
-        await query.edit_message_text(f"🎯 תוצאות:\n{data}", reply_markup=main_menu())
+    if data == "prediction":
+
+        await query.edit_message_text(
+            "🔄 טוען תחזיות..."
+        )
+
+        predictions = await fetch_predictions()
+
+        text = build_prediction_message(
+            predictions
+        )
+
+        await query.edit_message_text(
+            text,
+            reply_markup=main_menu()
+        )
+
+    # ─────────────────────────
+
+    elif data == "draws":
+
+        await query.edit_message_text(
+            "🔄 טוען הגרלות..."
+        )
+
+        draws = await fetch_draws()
+
+        text = build_draws_message(draws)
+
+        await query.edit_message_text(
+            text,
+            reply_markup=main_menu()
+        )
+
+    # ─────────────────────────
+
+    elif data == "hits":
+
+        await query.edit_message_text(
+            "🔄 מחשב..."
+        )
+
+        hits = await fetch_hits()
+
+        text = build_hits_message(hits)
+
+        await query.edit_message_text(
+            text,
+            reply_markup=main_menu()
+        )
 
 
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("שלח /start")
+# ════════════════════════════════
+# MESSAGE
+# ════════════════════════════════
+
+async def message_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    await update.message.reply_text(
+        "שלח /start"
+    )
 
 
-# =========================
-# AUTO LOOP
-# =========================
-
-async def auto_scan_loop(app):
-    await asyncio.sleep(5)
-
-    while True:
-        try:
-            preds = await fetch_predictions()
-
-            if preds:
-                latest = preds[0]
-                draw_number = latest.get("target_draw_number")
-
-                if CHAT_ID:
-                    await app.bot.send_message(
-                        chat_id=CHAT_ID,
-                        text=f"🔮 תחזית חדשה להגרלה #{draw_number}"
-                    )
-
-        except Exception as e:
-            print(f"LOOP ERROR: {e}")
-
-        await asyncio.sleep(60)
-
-
-# =========================
+# ════════════════════════════════
 # MAIN
-# =========================
+# ════════════════════════════════
 
 def main():
 
     if not TG_TOKEN:
-        print("❌ Missing TG_TOKEN")
+        print("❌ TG_TOKEN missing")
         return
 
     print("🚀 Bot Starting...")
 
-    app = Application.builder().token(TG_TOKEN).build()
+    app = (
+        Application
+        .builder()
+        .token(TG_TOKEN)
+        .build()
+    )
 
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CallbackQueryHandler(callback_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    app.add_handler(
+        CommandHandler(
+            "start",
+            start_command
+        )
+    )
 
-    async def post_init(application):
-        asyncio.create_task(auto_scan_loop(application))
+    app.add_handler(
+        CallbackQueryHandler(
+            callback_handler
+        )
+    )
 
-    app.post_init = post_init
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            message_handler
+        )
+    )
 
-    app.run_polling(close_loop=False)
+    app.run_polling()
 
 
 if __name__ == "__main__":
     main()
+```
