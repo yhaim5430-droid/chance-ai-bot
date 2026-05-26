@@ -65,11 +65,11 @@ def start(message):
     text = """
 ♣️♦️ CHANCE AI BOT ♠️♥️
 
-ברוך הבא למערכת 🎰
+ברוך הבא למערכת התחזיות 🎰
 
-🤖 AI Ranking Engine
+🤖 AI Engine פעיל
 📊 סטטיסטיקה חכמה
-🧠 מודלים מרובים
+🧠 מודל דירוג מתקדם
 """
 
     bot.send_message(
@@ -78,7 +78,7 @@ def start(message):
         reply_markup=main_menu()
     )
 
-# ================= 🎯 AI PREDICTION (NEW ENGINE) =================
+# ================= 🎯 SMART AI PREDICTION =================
 
 @bot.message_handler(func=lambda m: m.text == "🎯 חיזוי הבא")
 def next_prediction(message):
@@ -96,18 +96,18 @@ def next_prediction(message):
 
 📊 Score: {score}/100
 
-🧠 Analysis:
-• Candidate generation active
-• Statistical scoring applied
-• Diversity optimization enabled
+🧠 Engine:
+• Candidate Generator: ACTIVE
+• Scoring System: ACTIVE
+• Optimization: ACTIVE
 
-⚠️ Disclaimer:
+⚠️ חשוב:
 זה דירוג סטטיסטי בלבד, לא חיזוי עתיד
 """
 
     bot.send_message(message.chat.id, text)
 
-# ================= QUICK (still Base44) =================
+# ================= QUICK PREDICTION (Base44) =================
 
 @bot.message_handler(func=lambda m: m.text == "⚡ חיזוי מהיר")
 def quick_prediction(message):
@@ -132,7 +132,7 @@ def quick_prediction(message):
 
     bot.send_message(message.chat.id, text)
 
-# ================= DRAW HISTORY =================
+# ================= HISTORY =================
 
 @bot.message_handler(func=lambda m: m.text == "📜 היסטוריה")
 def history(message):
@@ -140,7 +140,7 @@ def history(message):
     data = get_data("Draw", 10, "-draw_number")
 
     if not data:
-        bot.send_message(message.chat.id, "❌ אין נתוני הגרלות")
+        bot.send_message(message.chat.id, "❌ אין נתונים")
         return
 
     text = "📜 10 הגרלות אחרונות\n\n"
@@ -156,7 +156,7 @@ def history(message):
 
     bot.send_message(message.chat.id, text)
 
-# ================= HOT / COLD =================
+# ================= HOT CARDS =================
 
 @bot.message_handler(func=lambda m: m.text == "🔥 Hot Cards")
 def hot_cards(message):
@@ -164,16 +164,26 @@ def hot_cards(message):
     data = get_data("Draw", 50)
 
     cards = []
-    for d in data or []:
-        cards += [d.get("spade"), d.get("heart"), d.get("diamond"), d.get("club")]
+
+    if data:
+        for d in data:
+            cards += [
+                d.get("spade"),
+                d.get("heart"),
+                d.get("diamond"),
+                d.get("club")
+            ]
 
     counter = Counter(cards)
 
     text = "🔥 Hot Cards\n\n"
+
     for card, count in counter.most_common(5):
         text += f"{card} → {count}\n"
 
     bot.send_message(message.chat.id, text)
+
+# ================= COLD CARDS =================
 
 @bot.message_handler(func=lambda m: m.text == "❄️ Cold Cards")
 def cold_cards(message):
@@ -183,8 +193,15 @@ def cold_cards(message):
     all_cards = ["7","8","9","10","J","Q","K","A"]
 
     cards = []
-    for d in data or []:
-        cards += [d.get("spade"), d.get("heart"), d.get("diamond"), d.get("club")]
+
+    if data:
+        for d in data:
+            cards += [
+                d.get("spade"),
+                d.get("heart"),
+                d.get("diamond"),
+                d.get("club")
+            ]
 
     counter = Counter(cards)
 
@@ -249,11 +266,11 @@ def quantum(message):
 
 @bot.message_handler(func=lambda m: m.text == "👑 VIP")
 def vip(message):
-    bot.send_message(message.chat.id, "👑 VIP System")
+    bot.send_message(message.chat.id, "👑 VIP System Active")
 
 @bot.message_handler(func=lambda m: m.text == "🔔 התראות")
 def notifications(message):
-    bot.send_message(message.chat.id, "🔔 Notifications System")
+    bot.send_message(message.chat.id, "🔔 Notifications Active")
 
 @bot.message_handler(func=lambda m: m.text == "ℹ️ מערכת")
 def about(message):
