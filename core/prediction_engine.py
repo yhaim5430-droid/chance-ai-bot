@@ -27,7 +27,7 @@ class PredictionEngine:
 
         weights = {v: (counter.get(v, 0) / total) for v in VALUES}
         
-        # קצת רעש כדי שהחיזויים לא יהיו זהים כל פעם
+        # מוסיף קצת רעש כדי שהחיזויים ישתנו בכל פעם
         for v in weights:
             weights[v] += random.uniform(-0.03, 0.03)
             if weights[v] < 0.01:
@@ -42,7 +42,7 @@ class PredictionEngine:
             k=1
         )[0]
 
-    def generate_candidates(self, n=500):
+    def generate_candidates(self, n=600):
         return [
             {
                 "spade": self.weighted_pick(),
