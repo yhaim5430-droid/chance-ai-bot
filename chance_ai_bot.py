@@ -62,17 +62,19 @@ def start(message):
 @bot.message_handler(func=lambda m: m.text == "🎯 חיזוי הבא")
 def next_prediction(message):
     orch = Orchestrator()
+    
     data = get_data("Draw", 1)
     last_draw = data[0].get("draw_number") if data and len(data) > 0 else None
 
     result = orch.generate_best_prediction(target_draw=last_draw)
+
     best = result["prediction"]
     score = result["score"]
     target = result["target_draw"]
     history_size = result.get("history_size", 0)
 
     text = f"""
-🎯 **SMART PREDICTION ENGINE**
+🎯 **SMART PREDICTION ENGINE** 🔄
 
 🎰 **Target Draw:** {target if target else 'Unknown'}
 
@@ -84,7 +86,7 @@ def next_prediction(message):
 📊 **Confidence:** {score}/100
 📈 **Based on:** {history_size} הגרלות אחרונות
 
-🧠 מבוסס על שכיחות היסטורית + דירוג סטטיסטי
+✅ נתונים טריים • מודל הסתברותי
 """
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
@@ -95,7 +97,6 @@ def quick_prediction(message):
     if not data:
         bot.send_message(message.chat.id, "❌ אין תחזיות זמינות")
         return
-    
     text = "⚡ **חיזויים מהירים אחרונים**\n\n"
     for p in data:
         text += f"""
@@ -108,16 +109,9 @@ def quick_prediction(message):
 @bot.message_handler(func=lambda m: m.text == "📊 סטטיסטיקות")
 def stats(message):
     draws = get_data("Draw", 100)
-    predictions = get_data("Prediction", 1)
-    
-    text = """
+    text = f"""
 📊 **סטטיסטיקות מערכת**
-
-"""
-    if draws:
-        text += f"🎰 הגרלות שנאספו: {len(draws)}\n"
-    
-    text += f"""
+🎰 הגרלות שנאספו: {len(draws) if draws else 0}
 🤖 AI Engine: **Active**
 📈 מודל הסתברות: **עדכני**
 """
@@ -130,10 +124,9 @@ def hot_cards(message):
     cards = []
     if data:
         for d in data:
-            cards += [d.get("spade"), d.get("heart"), d.get("diamond"), d.get("club")]
-    
+            cards += [d.get(k) for k in ["spade","heart","diamond","club"] if d.get(k)]
     counter = Counter(cards)
-    text = "🔥 **Hot Cards** (100 הגרלות אחרונות)\n\n"
+    text = "🔥 **Hot Cards** (100 הגרלות)\n\n"
     for card, count in counter.most_common(6):
         text += f"{card} → {count} פעמים\n"
     bot.send_message(message.chat.id, text)
@@ -146,8 +139,7 @@ def cold_cards(message):
     cards = []
     if data:
         for d in data:
-            cards += [d.get("spade"), d.get("heart"), d.get("diamond"), d.get("club")]
-    
+            cards += [d.get(k) for k in ["spade","heart","diamond","club"] if d.get(k)]
     counter = Counter(cards)
     text = "❄️ **Cold Cards**\n\n"
     for c in all_cards:
@@ -167,41 +159,15 @@ def history(message):
         text += f"#{d.get('draw_number')} → ♠️{d.get('spade')} ♥️{d.get('heart')} ♦️{d.get('diamond')} ♣️{d.get('club')}\n"
     bot.send_message(message.chat.id, text)
 
-# ================= 🧠 AI ANALYSIS =================
-@bot.message_handler(func=lambda m: m.text == "🧠 AI Analysis")
-def ai_analysis(message):
-    bot.send_message(message.chat.id, "🧠 **AI Analysis** - מנוע מתקדם מבוסס היסטוריה פעיל")
-
-# ================= 📈 TOP PATTERNS =================
-@bot.message_handler(func=lambda m: m.text == "📈 Top Patterns")
-def patterns(message):
-    bot.send_message(message.chat.id, "📈 **Top Patterns** - בדיקה מתקדמת בדרך...")
-
-# ================= 🪞 MIRROR & REVERSE =================
-@bot.message_handler(func=lambda m: m.text in ["🪞 Mirror", "🔄 Reverse"])
-def mirror_reverse(message):
-    bot.send_message(message.chat.id, f"{message.text} - פיצ'ר זה בפיתוח מתקדם")
-
-# ================= 🧪 QUANTUM =================
-@bot.message_handler(func=lambda m: m.text == "🧪 Quantum")
-def quantum(message):
-    bot.send_message(message.chat.id, "🧪 **Quantum Engine** - סימולציות מתקדמות בפיתוח")
-
-# ================= VIP & NOTIFICATIONS =================
-@bot.message_handler(func=lambda m: m.text in ["👑 VIP", "🔔 התראות"])
-def vip_notifications(message):
-    bot.send_message(message.chat.id, f"{message.text} - זמין בקרוב למשתמשים מתקדמים")
-
-# ================= ABOUT =================
-@bot.message_handler(func=lambda m: m.text == "ℹ️ מערכת")
-def about(message):
-    bot.send_message(message.chat.id, "🤖 **Chance AI System v2.1**\nמבוסס על היסטוריה + AI Scoring")
-
-# ================= UNKNOWN =================
+# ================= OTHER BUTTONS =================
 @bot.message_handler(func=lambda m: True)
-def unknown(message):
-    bot.send_message(message.chat.id, "❌ בחר אפשרות מהתפריט", reply_markup=main_menu())
+def handle_all(message):
+    text = message.text
+    if text in ["🧠 AI Analysis", "📈 Top Patterns", "🪞 Mirror", "🔄 Reverse", "🧪 Quantum", "👑 VIP", "🔔 התראות", "ℹ️ מערכת"]:
+        bot.send_message(message.chat.id, f"✅ {text} - פעיל / בפיתוח")
+    else:
+        bot.send_message(message.chat.id, "❌ בחר אפשרות מהתפריט", reply_markup=main_menu())
 
 # ================= RUN =================
-print("🚀 CHANCE AI BOT RUNNING - v2.1")
+print("🚀 CHANCE AI BOT RUNNING - v2.2")
 bot.infinity_polling(skip_pending=True)
