@@ -62,7 +62,6 @@ def start(message):
 @bot.message_handler(func=lambda m: m.text == "🎯 חיזוי הבא")
 def next_prediction(message):
     orch = Orchestrator()
-    
     data = get_data("Draw", 1)
     last_draw = data[0].get("draw_number") if data and len(data) > 0 else None
 
@@ -126,7 +125,7 @@ def hot_cards(message):
         for d in data:
             cards += [d.get(k) for k in ["spade","heart","diamond","club"] if d.get(k)]
     counter = Counter(cards)
-    text = "🔥 **Hot Cards** (100 הגרלות)\n\n"
+    text = "🔥 **Hot Cards** (100 הגרלות אחרונות)\n\n"
     for card, count in counter.most_common(6):
         text += f"{card} → {count} פעמים\n"
     bot.send_message(message.chat.id, text)
@@ -160,13 +159,38 @@ def history(message):
     bot.send_message(message.chat.id, text)
 
 # ================= OTHER BUTTONS =================
+@bot.message_handler(func=lambda m: m.text == "🧠 AI Analysis")
+def ai_analysis(message):
+    bot.send_message(message.chat.id, "🧠 **AI Analysis**\nמנוע הלמידה המתקדם שלנו פעיל ומנתח את הנתונים.")
+
+@bot.message_handler(func=lambda m: m.text == "📈 Top Patterns")
+def top_patterns(message):
+    bot.send_message(message.chat.id, "📈 **Top Patterns**\nהדפוסים הנפוצים ביותר בנתונים נמצאים בבדיקה...")
+
+@bot.message_handler(func=lambda m: m.text == "🪞 Mirror")
+def mirror(message):
+    bot.send_message(message.chat.id, "🪞 **Mirror Mode**\nחיזוי מבוסס השתקפות של ההגרלה האחרונה - בפיתוח")
+
+@bot.message_handler(func=lambda m: m.text == "🔄 Reverse")
+def reverse(message):
+    bot.send_message(message.chat.id, "🔄 **Reverse Mode**\nחיזוי הפוך - בפיתוח")
+
+@bot.message_handler(func=lambda m: m.text == "🧪 Quantum")
+def quantum(message):
+    bot.send_message(message.chat.id, "🧪 **Quantum Engine**\nסימולציות קוונטיות מתקדמות - בפיתוח")
+
+@bot.message_handler(func=lambda m: m.text == "👑 VIP")
+def vip(message):
+    bot.send_message(message.chat.id, "👑 **VIP Mode**\nתכונות מתקדמות זמינות למשתמשי VIP")
+
+@bot.message_handler(func=lambda m: m.text == "ℹ️ מערכת")
+def about(message):
+    bot.send_message(message.chat.id, "🤖 **Chance AI System v2.2**\nמערכת חיזוי מבוססת הסתברות והיסטוריה")
+
+# ================= FALLBACK =================
 @bot.message_handler(func=lambda m: True)
-def handle_all(message):
-    text = message.text
-    if text in ["🧠 AI Analysis", "📈 Top Patterns", "🪞 Mirror", "🔄 Reverse", "🧪 Quantum", "👑 VIP", "🔔 התראות", "ℹ️ מערכת"]:
-        bot.send_message(message.chat.id, f"✅ {text} - פעיל / בפיתוח")
-    else:
-        bot.send_message(message.chat.id, "❌ בחר אפשרות מהתפריט", reply_markup=main_menu())
+def unknown(message):
+    bot.send_message(message.chat.id, "❌ בחר אפשרות מהתפריט", reply_markup=main_menu())
 
 # ================= RUN =================
 print("🚀 CHANCE AI BOT RUNNING - v2.2")
