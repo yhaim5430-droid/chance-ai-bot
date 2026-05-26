@@ -4,7 +4,7 @@ from core.scoring_engine import ScoringEngine
 
 class Orchestrator:
 
-    def generate_best_prediction(self):
+    def generate_best_prediction(self, target_draw=None):
 
         engine = PredictionEngine()
         scorer = ScoringEngine()
@@ -21,4 +21,8 @@ class Orchestrator:
                 best_score = s
                 best = c
 
-        return best, best_score
+        return {
+            "prediction": best,
+            "score": best_score,
+            "target_draw": target_draw
+        }
