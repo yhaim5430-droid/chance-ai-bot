@@ -1,15 +1,13 @@
 from core.markov_engine import MarkovEngine
+from core.learning_engine import LearningEngine
 
 
 class ScoringEngine:
 
     def __init__(self):
-        pass
+        self.learning = LearningEngine()
 
     def score(self, candidate, history=None):
-        """
-        Scoring Engine משודרג (B stage) עם Markov transitions
-        """
 
         score = 0
         reasons = []
@@ -17,54 +15,56 @@ class ScoringEngine:
         values = list(candidate.values())
 
         # =========================
-        # בסיס יציב
+        # בסיס
         # =========================
-        score += 6
+        score += 5 * self.learning.weights["diversity"]
         reasons.append("base signal")
 
         # =========================
         # גיוון
         # =========================
         unique = len(set(values))
-        diversity_score = unique * 5
-        score += diversity_score
+        score += unique * 4 * self.learning.weights["diversity"]
 
         if unique == 4:
             reasons.append("good diversity")
-        elif unique == 3:
-            reasons.append("medium diversity")
-        else:
-            reasons.append("low diversity")
 
         # =========================
-        # Markov transitions (B core upgrade)
+        # Markov
         # =========================
         if history and len(history) > 5:
 
-            try:
-                markov = MarkovEngine(history)
-                transition_score = markov.transition_score(candidate)
+            markov = MarkovEngine(history)
+            transition = markov.transition_score(candidate)
 
-                # מנרמלים כדי לא לנפח ציונים
-                score += min(transition_score * 0.7, 25)
+            score += min(
+                transition * 0.6 * self.learning.weights["markov"],
+                25
+            )
 
-                if transition_score > 20:
-                    reasons.append("strong transition pattern")
-                elif transition_score > 10:
-                    reasons.append("moderate transition pattern")
-                else:
-                    reasons.append("weak transition pattern")
-
-            except Exception:
-                # fallback בטוח אם משהו נשבר
-                reasons.append("markov unavailable")
+            if transition > 20:
+                reasons.append("strong transition pattern")
 
         # =========================
-        # מניעת ציונים מנופחים
+        # היסטוריה
+        # =========================
+        if history:
+            hits = 0
+
+            for d in history[:15]:
+                for v in d.values():
+                    if v in values:
+                        hits += 1
+
+            score += min(hits * 1.2 * self.learning.weights["history"], 20)
+
+        # =========================
+        # מניעת אשליה
         # =========================
         score = max(0, min(score, 92))
 
         return {
             "score": round(score, 2),
-            "reasons": reasons
+            "reasons": reasons,
+            "weights": self.learning.weights
         }
