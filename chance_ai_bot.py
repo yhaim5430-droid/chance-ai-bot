@@ -2,7 +2,8 @@ import os
 import requests
 import telebot
 from telebot import types
-from collections import Counter
+
+from core.orchestrator import Orchestrator
 
 # ================= CONFIG =================
 
@@ -16,6 +17,9 @@ if not TOKEN:
 if not BASE44_API_KEY:
     raise Exception("Missing CHANCE_API_KEY")
 
+if not BASE44_APP_ID:
+    raise Exception("Missing CHANCE_APP_ID")
+
 bot = telebot.TeleBot(TOKEN)
 
 BASE_URL = f"https://app.base44.com/api/apps/{BASE44_APP_ID}"
@@ -28,15 +32,27 @@ HEADERS = {
 # ================= HELPERS =================
 
 def get_data(entity, limit=10, sort="-created_date"):
-
     url = f"{BASE_URL}/entities/{entity}?limit={limit}&sort_by={sort}"
 
-    r = requests.get(url, headers=HEADERS)
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=10)
 
-    if r.status_code != 200:
-        return None
+        if r.status_code != 200:
+            return []
 
-    return r.json()
+        data = r.json()
+
+        # Base44 לפעמים מחזיר {"data": [...]}
+        if isinstance(data, dict) and "data" in data:
+            return data["data"]
+
+        if isinstance(data, list):
+            return data
+
+        return []
+
+    except Exception:
+        return []
 
 # ================= MENU =================
 
@@ -50,7 +66,6 @@ def main_menu():
     markup.row("🪞 Mirror", "🔄 Reverse")
     markup.row("🧠 AI Analysis", "🧪 Quantum")
     markup.row("👑 VIP", "🔔 התראות")
-    markup.row("ℹ️ מערכת")
 
     return markup
 
@@ -58,30 +73,32 @@ def main_menu():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-
     bot.send_message(
         message.chat.id,
         "♣️ CHANCE AI BOT",
         reply_markup=main_menu()
     )
 
-# ================= NEXT PREDICTION =================
+# ================= QUICK (Base44 בלבד) =================
 
-@bot.message_handler(func=lambda m: m.text == "🎯 חיזוי הבא")
-def next_prediction(message):
+@bot.message_handler(func=lambda m: m.text == "⚡ חיזוי מהיר")
+def quick_prediction(message):
 
-    data = get_data("Prediction", 1)
+    data = get_data("Prediction", 4)
 
     if not data:
-        bot.send_message(message.chat.id, "❌ אין נתונים")
+        bot.send_message(message.chat.id, "❌ אין נתוני Base44")
         return
 
-    p = data[0]
+    text = "⚡️ חיזוי מהיר (Base44)\n\n"
 
-    text = f"""
-🎯 חיזוי הבא
+    for i, p in enumerate(data, start=1):
 
-🎰 #{p.get('target_draw_number')}
+        text += f"""
+🎯 חיזוי #{i}
+
+🎰 הגרלה יעד:
+#{p.get('target_draw_number')}
 
 ♠️ {p.get('main_spade')}
 ♥️ {p.get('main_heart')}
@@ -91,38 +108,55 @@ def next_prediction(message):
 🔥 חיזוקים:
 1) {p.get('reinforcement_1')}
 2) {p.get('reinforcement_2')}
+
+────────────────────
 """
 
     bot.send_message(message.chat.id, text)
 
-# ================= QUICK =================
+# ================= NEXT (AI + Orchestrator) =================
 
-@bot.message_handler(func=lambda m: m.text == "⚡ חיזוי מהיר")
-def quick_prediction(message):
+@bot.message_handler(func=lambda m: m.text == "🎯 חיזוי הבא")
+def next_prediction(message):
 
-    data = get_data("Prediction", 4)
+    draws = get_data("History", 50)
 
-    if not data:
-        bot.send_message(message.chat.id, "❌ אין נתונים")
+    if not draws:
+        bot.send_message(message.chat.id, "❌ אין נתוני היסטוריה")
         return
 
-    text = "⚡ חיזוי מהיר\n\n"
+    orchestrator = Orchestrator(draws)
+    result = orchestrator.predict()
 
-    for i, p in enumerate(data):
+    prediction = result["prediction"]
 
-        text += f"""
-🎯 #{i+1} → #{p.get('target_draw_number')}
-♠️ {p.get('main_spade')}
-♥️ {p.get('main_heart')}
-♦️ {p.get('main_diamond')}
-♣️ {p.get('main_club')}
+    text = f"""
+🎯 חיזוי הבא (AI Engine)
 
--------------------
+🎰 הגרלה יעד:
+#{result['target_draw']}
+
+♠️ {prediction.get('spade')}
+♥️ {prediction.get('heart')}
+♦️ {prediction.get('diamond')}
+♣️ {prediction.get('club')}
+
+📊 Score:
+{result['score']}/100
+
+🧠 Confidence:
+{result['confidence']}%
+
+⚠️ Risk:
+{result['confidence_level']}
+
+Why selected:
+{result['report']}
 """
 
     bot.send_message(message.chat.id, text)
 
-# ================= OTHER HANDLERS =================
+# ================= OTHER =================
 
 @bot.message_handler(func=lambda m: m.text == "📊 סטטיסטיקות")
 def stats(message):
@@ -170,6 +204,6 @@ def fallback(message):
 
 # ================= RUN =================
 
-print("🚀 CHANCE AI BOT STARTED")
-
-bot.infinity_polling(skip_pending=True)
+if __name__ == "__main__":
+    print("🚀 CHANCE AI BOT STARTED")
+    bot.infinity_polling(skip_pending=True)
