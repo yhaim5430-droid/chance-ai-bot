@@ -1,74 +1,120 @@
 import os
+import time
 import requests
 import telebot
 from telebot import types
-from collections import Counter
 
-# ================= CONFIG =================
+# ================== CONFIG ==================
 
 TOKEN = os.getenv("TG_TOKEN")
-BASE44_API_KEY = os.getenv("CHANCE_API_KEY")
-BASE44_APP_ID = os.getenv("CHANCE_APP_ID")
 
 if not TOKEN:
-    raise Exception("❌ חסר TG_TOKEN")
+    raise Exception("Missing TG_TOKEN")
 
-bot = telebot.TeleBot(TOKEN)   # 🔴 חובה להיות פה לפני הכל
+bot = telebot.TeleBot(TOKEN)
 
-# ================= HELPERS =================
+print("🚀 CHANCE AI BOT STARTED")
 
-def get_data(entity, limit=10, sort="-created_date"):
-    url = f"https://app.base44.com/api/apps/{BASE44_APP_ID}/entities/{entity}?limit={limit}&sort_by={sort}"
+# ================== SAFE START (ANTI 409) ==================
 
-    headers = {
-        "api_key": BASE44_API_KEY,
-        "Content-Type": "application/json"
-    }
+def safe_start():
+    """
+    מנקה getUpdates ישנים כדי למנוע 409
+    """
+    try:
+        requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1")
+    except:
+        pass
 
-    response = requests.get(url, headers=headers)
+safe_start()
 
-    if response.status_code != 200:
-        return None
+# ================== DATA ==================
 
-    return response.json()
+def get_data():
+    # כאן אתה יכול לחבר Base44 אם צריך
+    return [
+        {
+            "draw": 52953,
+            "cards": ["♠️10", "♥️9", "♦️Q", "♣️K"]
+        }
+    ]
 
-# ================= HANDLERS =================
+# ================== KEYBOARD ==================
 
-@bot.message_handler(func=lambda m: m.text == "⚡ חיזוי מהיר")
-def quick_prediction(message):
+def main_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    data = get_data("Prediction", 4)
+    markup.row("🎯 חיזוי הבא", "⚡ חיזוי מהיר")
+    markup.row("📊 סטטיסטיקות", "🔥 Hot Cards")
 
-    if not data:
-        bot.send_message(message.chat.id, "❌ אין חיזויים")
-        return
+    return markup
 
-    text = "⚡ חיזוי מהיר (Base44)\n\n"
+# ================== START ==================
 
-    for i, p in enumerate(data):
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.send_message(
+        message.chat.id,
+        "♣️ CHANCE AI BOT",
+        reply_markup=main_menu()
+    )
 
-        text += f"""
-🎯 חיזוי #{i+1}
+# ================== NEXT ==================
 
-🎰 הגרלה יעד:
-#{p.get('target_draw_number')}
+@bot.message_handler(func=lambda m: m.text == "🎯 חיזוי הבא")
+def next_prediction(message):
 
-♠️ {p.get('main_spade')}
-♥️ {p.get('main_heart')}
-♦️ {p.get('main_diamond')}
-♣️ {p.get('main_club')}
+    data = get_data()[0]
 
-🔥 חיזוקים:
-1) {p.get('reinforcement_1')}
-2) {p.get('reinforcement_2')}
+    text = f"""
+🎯 חיזוי הבא
 
-────────────────────
+🎰 הגרלה #{data['draw']}
+
+{data['cards'][0]}
+{data['cards'][1]}
+{data['cards'][2]}
+{data['cards'][3]}
 """
 
     bot.send_message(message.chat.id, text)
 
-# ================= RUN =================
+# ================== QUICK ==================
 
-print("🚀 CHANCE AI BOT STARTED")
+@bot.message_handler(func=lambda m: m.text == "⚡ חיזוי מהיר")
+def quick_prediction(message):
 
-bot.infinity_polling(skip_pending=True)
+    data = get_data()
+
+    text = "⚡ חיזוי מהיר\n\n"
+
+    for i, d in enumerate(data):
+
+        text += f"""
+🎯 #{i+1} → #{d['draw']}
+{d['cards'][0]} {d['cards'][1]} {d['cards'][2]} {d['cards'][3]}
+
+----------------
+"""
+
+    bot.send_message(message.chat.id, text)
+
+# ================== FALLBACK ==================
+
+@bot.message_handler(func=lambda m: True)
+def fallback(message):
+    bot.send_message(message.chat.id, "בחר אפשרות מהתפריט")
+
+# ================== RUN (SAFE POLLING) ==================
+
+while True:
+    try:
+        bot.infinity_polling(
+            skip_pending=True,
+            timeout=20,
+            long_polling_timeout=20
+        )
+
+    except Exception as e:
+        print("BOT ERROR:", e)
+        time.sleep(3)
