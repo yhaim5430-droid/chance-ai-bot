@@ -16,10 +16,8 @@ class Orchestrator:
 
         if confidence >= 80:
             level = "Moderate"
-
         elif confidence >= 60:
             level = "Low-Moderate"
-
         else:
             level = "Low"
 
@@ -27,7 +25,9 @@ class Orchestrator:
 
     def build_report(self, prediction, score):
 
-        unique_cards = len(set(prediction.values()))
+        values = list(prediction.values())
+        unique_cards = len(set(values))
+
         reasons = []
 
         if unique_cards >= 4:
@@ -50,27 +50,18 @@ class Orchestrator:
 
         scored = []
 
-        # =========================
-        # FIXED SCORING FLOW
-        # =========================
         for candidate in candidates:
 
-            score_data = self.scorer.score(candidate)
+            result = self.scorer.score(candidate, history=self.draws)
 
             scored.append({
                 "candidate": candidate,
-                "score": score_data["score"],
-                "reasons": score_data["reasons"]
+                "score": result["score"],
+                "reasons": result["reasons"]
             })
 
-        # =========================
-        # BEST PICK (FIXED)
-        # =========================
         best = max(scored, key=lambda x: x["score"])
 
-        # =========================
-        # DRAW LOGIC
-        # =========================
         latest_draw = max(
             [int(d.get("draw_number", 0)) for d in self.draws],
             default=0
@@ -78,34 +69,19 @@ class Orchestrator:
 
         target_draw = latest_draw + 1
 
-        # =========================
-        # CONFIDENCE
-        # =========================
         confidence, level = self.calculate_confidence(best["score"])
 
-        # =========================
-        # REPORT
-        # =========================
         report = self.build_report(
             prediction=best["candidate"],
             score=best["score"]
         )
 
-        # =========================
-        # RETURN CLEAN OUTPUT
-        # =========================
         return {
             "target_draw": target_draw,
-
             "prediction": best["candidate"],
-
             "score": best["score"],
-
             "confidence": confidence,
-
             "confidence_level": level,
-
             "report": report,
-
             "reasons": best["reasons"]
         }
