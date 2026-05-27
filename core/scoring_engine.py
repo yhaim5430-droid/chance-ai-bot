@@ -5,7 +5,7 @@ class ScoringEngine:
 
     def score(self, candidate, history=None):
         """
-        מחשב ציון לחיזוי (גרסה מאוזנת ולא מנופחת)
+        ניקוד יציב, מאוזן ולא מנופח (A stage)
         """
 
         score = 0
@@ -14,17 +14,16 @@ class ScoringEngine:
         values = list(candidate.values())
 
         # =========================
-        # בסיס נמוך יותר (לא מנפח ציונים)
+        # בסיס יציב
         # =========================
-        score += 10
+        score += 8
         reasons.append("base signal")
 
         # =========================
-        # גיוון – מדורג ולא מקסימום
+        # גיוון (לא דומיננטי מדי)
         # =========================
         unique = len(set(values))
-        diversity_score = unique * 7  # פחות אגרסיבי מהגרסה הקודמת
-        score += diversity_score
+        score += unique * 6
 
         if unique == 4:
             reasons.append("good diversity")
@@ -34,30 +33,40 @@ class ScoringEngine:
             reasons.append("low diversity")
 
         # =========================
-        # היסטוריה – השפעה אמיתית אבל לא מוגזמת
+        # אנטי חזרתיות (חשוב מאוד ל-A)
+        # =========================
+        if len(values) != len(set(values)):
+            score -= 8
+            reasons.append("duplicate penalty")
+
+        # =========================
+        # Recency / היסטוריה אמיתית
         # =========================
         if history:
-            hits = 0
+            recent = history[:10]
 
-            for d in history[:20]:
+            hits = 0
+            recent_bias = 0
+
+            for i, d in enumerate(recent):
+                weight = 1.0 - (i * 0.08)  # יותר משקל לאחרונים
                 for v in d.values():
                     if v in values:
-                        hits += 1
+                        hits += weight
 
-            history_score = min(hits * 1.2, 20)
-            score += history_score
+            score += min(hits * 1.5, 18)
 
-            if hits > 15:
-                reasons.append("strong history alignment")
-            elif hits > 8:
-                reasons.append("moderate history alignment")
+            if hits > 12:
+                reasons.append("strong recent alignment")
+            elif hits > 6:
+                reasons.append("moderate recent alignment")
             else:
-                reasons.append("weak history alignment")
+                reasons.append("weak recent alignment")
 
         # =========================
-        # מניעת זיוף 100
+        # חסימת אשליית 100
         # =========================
-        score = min(score, 90)
+        score = max(0, min(score, 88))
 
         return {
             "score": round(score, 2),
