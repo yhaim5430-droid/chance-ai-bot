@@ -1,16 +1,63 @@
 from collections import Counter
 import math
 
+
 class ScoringEngine:
 
-    def score(self, c):
+    def __init__(self, draws):
 
-        values = [c[k] for k in c]
+        self.draws = draws
 
-        unique = len(set(values))
-        balance = unique / 4
+    def calculate_entropy(self, values):
 
         freq = Counter(values)
-        entropy = -sum((v/4)*math.log2(v/4) for v in freq.values())
 
-        return round(balance*60 + entropy*40, 2)
+        total = len(values)
+
+        entropy = 0
+
+        for count in freq.values():
+
+            p = count / total
+
+            entropy -= p * math.log2(p)
+
+        return entropy
+
+    def diversity_score(self, candidate):
+
+        values = list(candidate.values())
+
+        unique = len(set(values))
+
+        return unique / 4
+
+    def balance_score(self, candidate):
+
+        values = list(candidate.values())
+
+        duplicates = len(values) - len(set(values))
+
+        return max(0, 1 - duplicates * 0.25)
+
+    def entropy_score(self, candidate):
+
+        values = list(candidate.values())
+
+        entropy = self.calculate_entropy(values)
+
+        return min(entropy / 2, 1)
+
+    def score(self, candidate):
+
+        diversity = self.diversity_score(candidate)
+        balance = self.balance_score(candidate)
+        entropy = self.entropy_score(candidate)
+
+        final_score = (
+            diversity * 40
+            + balance * 30
+            + entropy * 30
+        )
+
+        return round(final_score, 2)
