@@ -1,17 +1,28 @@
+import os
 from telebot import TeleBot
 
 from core.orchestrator import Orchestrator
-from core.prediction_engine import PredictionEngine
-from core.scoring_engine import ScoringEngine
 
-# ❗ כאן אתה צריך את הפונקציה שלך שמביאה נתונים מ־Base44 / DB
-# תשאיר כמו שיש לך בפועל
-def get_data(table_name, limit):
-    return []  # placeholder - אל תשאיר ככה בפרודקשן
+# =========================
+# 🔐 TOKEN (בטוח לפרודקשן)
+# =========================
+TOKEN = os.getenv("BOT_TOKEN")
 
+if not TOKEN:
+    raise ValueError("❌ BOT_TOKEN לא מוגדר ב-ENV (Railway / Render)")
 
-TOKEN = "YOUR_BOT_TOKEN"
 bot = TeleBot(TOKEN)
+
+
+# =========================
+# 📦 נתונים (תחליף לפי Base44 שלך)
+# =========================
+def get_data(table_name, limit):
+    """
+    ⚠️ זה placeholder בלבד
+    חבר כאן את Base44 / DB שלך
+    """
+    return []
 
 
 # =========================
@@ -34,16 +45,16 @@ def quick_prediction(message):
 🎯 חיזוי #{i}
 
 🎰 הגרלה יעד:
-#{p.get('target_draw_number')}
+#{p.get('target_draw_number', '')}
 
-♠️ {p.get('main_spade')}
-♥️ {p.get('main_heart')}
-♦️ {p.get('main_diamond')}
-♣️ {p.get('main_club')}
+♠️ {p.get('main_spade', '')}
+♥️ {p.get('main_heart', '')}
+♦️ {p.get('main_diamond', '')}
+♣️ {p.get('main_club', '')}
 
 🔥 חיזוקים:
-1) {p.get('reinforcement_1')}
-2) {p.get('reinforcement_2')}
+1) {p.get('reinforcement_1', '')}
+2) {p.get('reinforcement_2', '')}
 
 ────────────────────
 """
@@ -59,34 +70,38 @@ def next_prediction(message):
 
     draws = get_data("History", 50)
 
+    if not draws:
+        bot.send_message(message.chat.id, "❌ אין היסטוריה לניתוח")
+        return
+
     orchestrator = Orchestrator(draws)
 
     result = orchestrator.predict()
 
-    prediction = result["prediction"]
+    prediction = result.get("prediction", {})
 
     text = f"""
 🎯 חיזוי הבא (AI Engine)
 
 🎰 הגרלה יעד:
-#{result['target_draw']}
+#{result.get('target_draw', '')}
 
-♠️ {prediction.get('spade')}
-♥️ {prediction.get('heart')}
-♦️ {prediction.get('diamond')}
-♣️ {prediction.get('club')}
+♠️ {prediction.get('spade', '')}
+♥️ {prediction.get('heart', '')}
+♦️ {prediction.get('diamond', '')}
+♣️ {prediction.get('club', '')}
 
 📊 Score:
-{result['score']}/100
+{result.get('score', 0)}/100
 
 🧠 Confidence:
-{result['confidence']}%
+{result.get('confidence', 0)}%
 
 ⚠️ Risk:
-{result['confidence_level']}
+{result.get('confidence_level', '')}
 
 Why selected:
-{result['report']}
+{result.get('report', '')}
 """
 
     bot.send_message(message.chat.id, text)
