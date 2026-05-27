@@ -5,29 +5,27 @@ from core.scoring_engine import ScoringEngine
 class Orchestrator:
 
     def __init__(self, draws):
+
         self.draws = draws
         self.predictor = PredictionEngine(draws)
         self.scorer = ScoringEngine()
 
     def calculate_confidence(self, best_score):
 
-        # ירידה קלה ברגישות (יותר מציאותי)
-        confidence = round(min(best_score * 0.95, 92), 1)
+        confidence = round(min(best_score, 95), 1)
 
-        if confidence >= 75:
+        if confidence >= 80:
             level = "Moderate"
-        elif confidence >= 55:
+        elif confidence >= 60:
             level = "Low-Moderate"
         else:
             level = "Low"
 
         return confidence, level
 
-    def build_report(self, prediction, score):
+    def build_report(self, prediction, score, confidence_level):
 
-        values = list(prediction.values())
-        unique_cards = len(set(values))
-
+        unique_cards = len(set(prediction.values()))
         reasons = []
 
         if unique_cards >= 4:
@@ -46,17 +44,17 @@ class Orchestrator:
 
     def predict(self):
 
-        candidates = self.predictor.generate_candidates(250)
+        candidates = self.predictor.generate_candidates(200)
 
         scored = []
 
         for candidate in candidates:
-            result = self.scorer.score(candidate, history=self.draws)
+
+            result = self.scorer.score(candidate)
 
             scored.append({
                 "candidate": candidate,
-                "score": result["score"],
-                "reasons": result["reasons"]
+                "score": result["score"]
             })
 
         best = max(scored, key=lambda x: x["score"])
@@ -72,7 +70,8 @@ class Orchestrator:
 
         report = self.build_report(
             prediction=best["candidate"],
-            score=best["score"]
+            score=best["score"],
+            confidence_level=level
         )
 
         return {
@@ -81,6 +80,11 @@ class Orchestrator:
             "score": best["score"],
             "confidence": confidence,
             "confidence_level": level,
-            "report": report,
-            "reasons": best["reasons"]
+            "report": report
         }
+
+    def update_learning(self, prediction, actual_result):
+        """
+        אופציונלי לשלב C (לא חובה עכשיו)
+        """
+        self.scorer.update(prediction, actual_result)
