@@ -113,3 +113,4 @@ Why selected:
 if __name__ == "__main__":
     print("🚀 CHANCE AI BOT STARTED")
     bot.infinity_polling(skip_pending=True)
+    
