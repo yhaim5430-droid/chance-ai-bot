@@ -1,3 +1,6 @@
+from core.markov_engine import MarkovEngine
+
+
 class ScoringEngine:
 
     def __init__(self):
@@ -5,7 +8,7 @@ class ScoringEngine:
 
     def score(self, candidate, history=None):
         """
-        ניקוד יציב, מאוזן ולא מנופח (A stage)
+        Scoring Engine משודרג (B stage) עם Markov transitions
         """
 
         score = 0
@@ -16,14 +19,15 @@ class ScoringEngine:
         # =========================
         # בסיס יציב
         # =========================
-        score += 8
+        score += 6
         reasons.append("base signal")
 
         # =========================
-        # גיוון (לא דומיננטי מדי)
+        # גיוון
         # =========================
         unique = len(set(values))
-        score += unique * 6
+        diversity_score = unique * 5
+        score += diversity_score
 
         if unique == 4:
             reasons.append("good diversity")
@@ -33,40 +37,32 @@ class ScoringEngine:
             reasons.append("low diversity")
 
         # =========================
-        # אנטי חזרתיות (חשוב מאוד ל-A)
+        # Markov transitions (B core upgrade)
         # =========================
-        if len(values) != len(set(values)):
-            score -= 8
-            reasons.append("duplicate penalty")
+        if history and len(history) > 5:
 
-        # =========================
-        # Recency / היסטוריה אמיתית
-        # =========================
-        if history:
-            recent = history[:10]
+            try:
+                markov = MarkovEngine(history)
+                transition_score = markov.transition_score(candidate)
 
-            hits = 0
-            recent_bias = 0
+                # מנרמלים כדי לא לנפח ציונים
+                score += min(transition_score * 0.7, 25)
 
-            for i, d in enumerate(recent):
-                weight = 1.0 - (i * 0.08)  # יותר משקל לאחרונים
-                for v in d.values():
-                    if v in values:
-                        hits += weight
+                if transition_score > 20:
+                    reasons.append("strong transition pattern")
+                elif transition_score > 10:
+                    reasons.append("moderate transition pattern")
+                else:
+                    reasons.append("weak transition pattern")
 
-            score += min(hits * 1.5, 18)
-
-            if hits > 12:
-                reasons.append("strong recent alignment")
-            elif hits > 6:
-                reasons.append("moderate recent alignment")
-            else:
-                reasons.append("weak recent alignment")
+            except Exception:
+                # fallback בטוח אם משהו נשבר
+                reasons.append("markov unavailable")
 
         # =========================
-        # חסימת אשליית 100
+        # מניעת ציונים מנופחים
         # =========================
-        score = max(0, min(score, 88))
+        score = max(0, min(score, 92))
 
         return {
             "score": round(score, 2),
