@@ -1,78 +1,67 @@
-import random
-
-from core.draw_analyzer import DrawAnalyzer
+import hashlib
 
 
 class PredictionEngine:
 
     def __init__(self, draws):
-
         self.draws = draws
 
-        self.values = [
-            "7",
-            "8",
-            "9",
-            "10",
-            "J",
-            "Q",
-            "K",
-            "A"
-        ]
+        self.suits = ["spade", "heart", "diamond", "club"]
+        self.values = ["A", "K", "Q", "J", "10", "9", "8", "7"]
 
-        self.analyzer = DrawAnalyzer(draws)
-
-        self.global_freq = (
-            self.analyzer.get_card_frequencies()
-        )
-
-        self.position_freq = (
-            self.analyzer.get_position_frequencies()
-        )
-
-    def weighted_pick(self, suit):
-
-        weights = []
-
-        for value in self.values:
-
-            position_weight = (
-                self.position_freq[suit].get(value, 0)
-            )
-
-            global_weight = (
-                self.global_freq.get(value, 0)
-            )
-
-            score = (
-                position_weight * 0.7
-                + global_weight * 100 * 0.3
-            )
-
-            weights.append(score + 1)
-
-        return random.choices(
-            self.values,
-            weights=weights,
-            k=1
-        )[0]
-
-    def generate_candidate(self):
-
-        return {
-            "spade": self.weighted_pick("spade"),
-            "heart": self.weighted_pick("heart"),
-            "diamond": self.weighted_pick("diamond"),
-            "club": self.weighted_pick("club")
-        }
+    # =========================
+    # MAIN (compatibility fallback)
+    # =========================
 
     def generate_candidates(self, n=300):
+        """
+        fallback ישן (לא בשימוש במצב יציב)
+        """
+        return [self.generate_deterministic(f"fallback_{i}") for i in range(n)]
 
-        candidates = []
+    # =========================
+    # CORE: DETERMINISTIC GENERATION
+    # =========================
 
-        for _ in range(n):
-            candidates.append(
-                self.generate_candidate()
-            )
+    def generate_deterministic(self, seed):
+        """
+        מייצר חיזוי אחד קבוע לחלוטין לפי seed
+        """
 
-        return candidates
+        # hash קבוע
+        h = hashlib.sha256(seed.encode()).hexdigest()
+
+        # חיתוך ערכים מה-hash
+        parts = [
+            h[i:i+2] for i in range(0, 8, 2)
+        ]
+
+        # יצירת אינדקסים יציבים
+        idx_s = int(parts[0], 16) % len(self.values)
+        idx_h = int(parts[1], 16) % len(self.values)
+        idx_d = int(parts[2], 16) % len(self.values)
+        idx_c = int(parts[3], 16) % len(self.values)
+
+        return {
+            "spade": self.values[idx_s],
+            "heart": self.values[idx_h],
+            "diamond": self.values[idx_d],
+            "club": self.values[idx_c]
+        }
+
+    # =========================
+    # OPTIONAL: legacy random (not used)
+    # =========================
+
+    def generate_random_like(self):
+        """
+        שמור רק לצורך בדיקות, לא בשימוש במערכת היציבה
+        """
+        import random
+
+        return {
+            "spade": random.choice(self.values),
+            "heart": random.choice(self.values),
+            "diamond": random.choice(self.values),
+            "club": random.choice(self.values)
+        }
