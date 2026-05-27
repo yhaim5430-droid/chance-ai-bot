@@ -11,22 +11,39 @@ class ScoringEngine:
         score = 0
         reasons = []
 
+        values = list(candidate.values())
+
         # בסיס יציבות
-        score += 30
+        score += 25
         reasons.append("base stability")
 
         # גיוון קלפים
-        unique = len(set(candidate.values()))
-        score += unique * 10
+        unique = len(set(values))
+        score += unique * 12
         reasons.append("diversity check")
 
-        # בונוס אם יש התאמה להיסטוריה
+        # בונוס על מבנה מאוזן (לא אותו סוג חוזר)
+        if unique >= 4:
+            score += 15
+            reasons.append("balanced structure")
+
+        # חיזוק היסטוריה אמיתי (אם קיים)
         if history:
-            score += 20
+            hits = 0
+            for d in history[:10]:
+                for v in d.values():
+                    if v in values:
+                        hits += 1
+
+            score += min(hits * 2, 20)
             reasons.append("history alignment")
 
-        # נרמול
-        score = min(score, 100)
+        # מניעת overfit
+        if len(set(values)) < 3:
+            score -= 10
+            reasons.append("low diversity penalty")
+
+        score = max(0, min(score, 100))
 
         return {
             "score": round(score, 2),
