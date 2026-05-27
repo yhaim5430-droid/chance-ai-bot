@@ -5,18 +5,18 @@ from core.scoring_engine import ScoringEngine
 class Orchestrator:
 
     def __init__(self, draws):
-
         self.draws = draws
         self.predictor = PredictionEngine(draws)
         self.scorer = ScoringEngine()
 
     def calculate_confidence(self, best_score):
 
-        confidence = round(min(best_score, 95), 1)
+        # ירידה קלה ברגישות (יותר מציאותי)
+        confidence = round(min(best_score * 0.95, 92), 1)
 
-        if confidence >= 80:
+        if confidence >= 75:
             level = "Moderate"
-        elif confidence >= 60:
+        elif confidence >= 55:
             level = "Low-Moderate"
         else:
             level = "Low"
@@ -33,10 +33,10 @@ class Orchestrator:
         if unique_cards >= 4:
             reasons.append("• good diversity")
 
-        if score >= 75:
+        if score >= 70:
             reasons.append("• balanced structure")
 
-        if score >= 65:
+        if score >= 60:
             reasons.append("• statistically weighted")
 
         if not reasons:
@@ -46,12 +46,11 @@ class Orchestrator:
 
     def predict(self):
 
-        candidates = self.predictor.generate_candidates(300)
+        candidates = self.predictor.generate_candidates(250)
 
         scored = []
 
         for candidate in candidates:
-
             result = self.scorer.score(candidate, history=self.draws)
 
             scored.append({
