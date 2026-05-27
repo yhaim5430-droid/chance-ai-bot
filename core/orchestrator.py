@@ -1,6 +1,7 @@
 from core.prediction_engine import PredictionEngine
 from core.scoring_engine import ScoringEngine
 from core.transition_engine import TransitionEngine
+import hashlib
 
 
 class Orchestrator:
@@ -9,18 +10,39 @@ class Orchestrator:
 
         self.draws = draws
 
-        # engines
         self.predictor = PredictionEngine(draws)
         self.scorer = ScoringEngine()
         self.transition = TransitionEngine(draws)
 
     # =========================
+    # STABLE SEED (הדבר הכי חשוב)
+    # =========================
+
+    def _get_seed(self):
+        """
+        יוצר seed קבוע לפי ההגרלה האחרונה
+        => מבטיח חיזוי אחד בלבד
+        """
+
+        if not self.draws:
+            return "0"
+
+        latest = max(
+            self.draws,
+            key=lambda d: int(d.get("draw_number", 0))
+        )
+
+        raw = f"{latest.get('draw_number')}|{latest}"
+
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    # =========================
     # CONFIDENCE
     # =========================
 
-    def calculate_confidence(self, best_score):
+    def calculate_confidence(self, score):
 
-        confidence = round(min(best_score, 95), 1)
+        confidence = round(min(score, 95), 1)
 
         if confidence >= 80:
             level = "Moderate"
@@ -46,24 +68,8 @@ class Orchestrator:
         if score >= 75:
             reasons.append("• balanced structure")
 
-        if score >= 65:
+        if score >= 60:
             reasons.append("• statistically weighted")
-
-        # שימוש ב־transition engine (אמיתי עכשיו)
-        spade = prediction.get("spade")
-        heart = prediction.get("heart")
-        diamond = prediction.get("diamond")
-        club = prediction.get("club")
-
-        if spade:
-            stability = self.transition.stability("spade", spade)
-            if stability > 0.3:
-                reasons.append("• spade stability signal")
-
-        if heart:
-            stability = self.transition.stability("heart", heart)
-            if stability > 0.3:
-                reasons.append("• heart stability signal")
 
         if not reasons:
             reasons.append("• weak statistical signal")
@@ -71,59 +77,47 @@ class Orchestrator:
         return "\n".join(reasons)
 
     # =========================
-    # PREDICT
+    # SINGLE STABLE PREDICTION
     # =========================
 
     def predict(self):
 
-        candidates = self.predictor.generate_candidates(300)
+        # 1. seed קבוע
+        seed = self._get_seed()
 
-        scored = []
+        # 2. יצירת מועמד אחד בלבד (לא 300)
+        candidate = self.predictor.generate_deterministic(seed)
 
-        for candidate in candidates:
+        # 3. score יציב
+        score_data = self.scorer.score(candidate)
+        score = score_data["score"]
 
-            score_data = self.scorer.score(candidate)
-            score = score_data["score"]
-
-            scored.append({
-                "candidate": candidate,
-                "score": score
-            })
-
-        best = max(scored, key=lambda x: x["score"])
-
+        # 4. יעד הגרלה
         latest_draw = max(
-            [
-                int(d.get("draw_number", 0))
-                for d in self.draws
-            ],
+            [int(d.get("draw_number", 0)) for d in self.draws],
             default=0
         )
 
         target_draw = latest_draw + 1
 
-        confidence, level = self.calculate_confidence(best["score"])
+        # 5. confidence
+        confidence, level = self.calculate_confidence(score)
 
-        report = self.build_report(
-            prediction=best["candidate"],
-            score=best["score"]
-        )
+        # 6. report
+        report = self.build_report(candidate, score)
 
         return {
             "target_draw": target_draw,
-            "prediction": best["candidate"],
-            "score": best["score"],
+            "prediction": candidate,
+            "score": score,
             "confidence": confidence,
             "confidence_level": level,
             "report": report
         }
 
     # =========================
-    # OPTIONAL FUTURE LEARNING
+    # FUTURE LEARNING
     # =========================
 
     def update_learning(self, prediction, actual_result):
-        """
-        עתידי: שיפור מודלים לפי תוצאות אמת
-        """
         pass
