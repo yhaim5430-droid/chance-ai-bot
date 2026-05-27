@@ -8,56 +8,90 @@ class ScoringEngine:
 
         self.draws = draws
 
-    def calculate_entropy(self, values):
+        self.values = ["7", "8", "9", "10", "J", "Q", "K", "A"]
 
-        freq = Counter(values)
+        self.analyzed = self._analyze()
 
-        total = len(values)
+    # =========================
+    # ANALYSIS
+    # =========================
 
-        entropy = 0
+    def _analyze(self):
 
-        for count in freq.values():
+        cards = []
 
-            p = count / total
+        for d in self.draws:
 
-            entropy -= p * math.log2(p)
+            cards.extend([
+                d.get("spade"),
+                d.get("heart"),
+                d.get("diamond"),
+                d.get("club")
+            ])
 
-        return entropy
+        counter = Counter(cards)
 
-    def diversity_score(self, candidate):
+        total = sum(counter.values())
 
-        values = list(candidate.values())
+        freq = {}
 
-        unique = len(set(values))
+        for v in self.values:
 
-        return unique / 4
+            freq[v] = counter.get(v, 0) / total if total else 0
 
-    def balance_score(self, candidate):
+        return {
+            "freq": freq,
+            "counter": counter,
+            "total": total
+        }
 
-        values = list(candidate.values())
+    # =========================
+    # CARD SCORE
+    # =========================
 
-        duplicates = len(values) - len(set(values))
+    def score_card(self, card):
 
-        return max(0, 1 - duplicates * 0.25)
+        freq = self.analyzed["freq"].get(card, 0)
 
-    def entropy_score(self, candidate):
+        # rarity score (יותר נדיר = יותר גבוה)
+        rarity = 1 - freq
 
-        values = list(candidate.values())
+        # stability penalty (מונע overfitting)
+        stability = math.log(1 + self.analyzed["counter"].get(card, 0))
 
-        entropy = self.calculate_entropy(values)
+        score = (0.7 * rarity) + (0.3 * (1 / (1 + stability)))
 
-        return min(entropy / 2, 1)
+        return round(score, 4)
 
-    def score(self, candidate):
+    # =========================
+    # PREDICTION SCORE
+    # =========================
 
-        diversity = self.diversity_score(candidate)
-        balance = self.balance_score(candidate)
-        entropy = self.entropy_score(candidate)
+    def score_prediction(self, prediction):
 
-        final_score = (
-            diversity * 40
-            + balance * 30
-            + entropy * 30
-        )
+        cards = [
+            prediction.get("main_spade"),
+            prediction.get("main_heart"),
+            prediction.get("main_diamond"),
+            prediction.get("main_club")
+        ]
 
-        return round(final_score, 2)
+        scores = [self.score_card(c) for c in cards]
+
+        avg_score = sum(scores) / len(scores)
+
+        # diversity bonus (מונע חזרתיות)
+        unique_bonus = len(set(cards)) / 4
+
+        final_score = (0.8 * avg_score) + (0.2 * unique_bonus)
+
+        confidence = min(0.85, avg_score)
+
+        return {
+            "score": round(final_score * 100, 2),
+            "confidence": round(confidence * 100, 2),
+            "details": {
+                "card_scores": dict(zip(cards, scores)),
+                "unique_ratio": unique_bonus
+            }
+        }
