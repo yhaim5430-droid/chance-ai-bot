@@ -42,7 +42,6 @@ def get_data(entity, limit=10, sort="-created_date"):
 
         data = r.json()
 
-        # Base44 לפעמים מחזיר {"data": [...]}
         if isinstance(data, dict) and "data" in data:
             return data["data"]
 
@@ -79,7 +78,7 @@ def start(message):
         reply_markup=main_menu()
     )
 
-# ================= QUICK (Base44 בלבד) =================
+# ================= QUICK (Base44) =================
 
 @bot.message_handler(func=lambda m: m.text == "⚡ חיזוי מהיר")
 def quick_prediction(message):
@@ -114,7 +113,7 @@ def quick_prediction(message):
 
     bot.send_message(message.chat.id, text)
 
-# ================= NEXT (AI + Orchestrator) =================
+# ================= NEXT (AI ORCHESTRATOR FIXED) =================
 
 @bot.message_handler(func=lambda m: m.text == "🎯 חיזוי הבא")
 def next_prediction(message):
@@ -128,30 +127,38 @@ def next_prediction(message):
     orchestrator = Orchestrator(draws)
     result = orchestrator.predict()
 
-    prediction = result["prediction"]
+    prediction = result.get("prediction", {})
+
+    score = result.get("score", 0)
+    confidence = result.get("confidence", 0)
+    level = result.get("confidence_level", "Unknown")
+    report = result.get("report", "")
+
+    if not isinstance(prediction, dict):
+        prediction = {}
 
     text = f"""
 🎯 חיזוי הבא (AI Engine)
 
 🎰 הגרלה יעד:
-#{result['target_draw']}
+#{result.get('target_draw')}
 
-♠️ {prediction.get('spade')}
-♥️ {prediction.get('heart')}
-♦️ {prediction.get('diamond')}
-♣️ {prediction.get('club')}
+♠️ {prediction.get('spade', 'N/A')}
+♥️ {prediction.get('heart', 'N/A')}
+♦️ {prediction.get('diamond', 'N/A')}
+♣️ {prediction.get('club', 'N/A')}
 
 📊 Score:
-{result['score']}/100
+{score}/100
 
 🧠 Confidence:
-{result['confidence']}%
+{confidence}%
 
 ⚠️ Risk:
-{result['confidence_level']}
+{level}
 
 Why selected:
-{result['report']}
+{report}
 """
 
     bot.send_message(message.chat.id, text)
@@ -193,10 +200,6 @@ def quantum(message):
 @bot.message_handler(func=lambda m: m.text == "👑 VIP")
 def vip(message):
     bot.send_message(message.chat.id, "👑 VIP")
-
-@bot.message_handler(func=lambda m: m.text == "🔔 התראות")
-def alerts(message):
-    bot.send_message(message.chat.id, "🔔 התראות")
 
 @bot.message_handler(func=lambda m: True)
 def fallback(message):
