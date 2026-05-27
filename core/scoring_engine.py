@@ -1,70 +1,64 @@
-from core.markov_engine import MarkovEngine
-from core.learning_engine import LearningEngine
-
+from collections import defaultdict
 
 class ScoringEngine:
 
     def __init__(self):
-        self.learning = LearningEngine()
+        # למידה עתידית (לא חובה כרגע אבל מוכן)
+        self.transition = defaultdict(lambda: defaultdict(int))
+
+    def update(self, prediction, actual):
+        """
+        learning layer (future use)
+        """
+        pass
 
     def score(self, candidate, history=None):
+        """
+        מחשב ציון אמיתי (לא מזויף 100)
+        """
 
         score = 0
         reasons = []
 
         values = list(candidate.values())
 
-        # =========================
-        # בסיס
-        # =========================
-        score += 5 * self.learning.weights["diversity"]
-        reasons.append("base signal")
-
-        # =========================
-        # גיוון
-        # =========================
+        # 1. גיוון בסיסי
         unique = len(set(values))
-        score += unique * 4 * self.learning.weights["diversity"]
+        diversity_score = unique * 12
+        score += diversity_score
 
-        if unique == 4:
+        if unique >= 4:
             reasons.append("good diversity")
 
-        # =========================
-        # Markov
-        # =========================
-        if history and len(history) > 5:
+        # 2. איזון בין קלפים גבוהים/נמוכים
+        high_cards = sum(1 for v in values if v in ["10", "J", "Q", "K", "A"])
+        low_cards = 4 - high_cards
 
-            markov = MarkovEngine(history)
-            transition = markov.transition_score(candidate)
+        balance = 10 - abs(high_cards - low_cards)
+        score += balance * 3
 
-            score += min(
-                transition * 0.6 * self.learning.weights["markov"],
-                25
-            )
+        if abs(high_cards - low_cards) <= 1:
+            reasons.append("balanced structure")
 
-            if transition > 20:
-                reasons.append("strong transition pattern")
-
-        # =========================
-        # היסטוריה
-        # =========================
+        # 3. דמיון להיסטוריה (אם יש)
         if history:
-            hits = 0
+            history_values = []
+            for h in history[-10:]:
+                history_values.extend(list(h.values()))
 
-            for d in history[:15]:
-                for v in d.values():
-                    if v in values:
-                        hits += 1
+            overlap = len(set(values) & set(history_values))
+            score += overlap * 4
 
-            score += min(hits * 1.2 * self.learning.weights["history"], 20)
+            if overlap >= 2:
+                reasons.append("statistical alignment")
 
-        # =========================
-        # מניעת אשליה
-        # =========================
-        score = max(0, min(score, 92))
+        # 4. מניעת זיוף 100
+        score = min(score, 92)
+
+        # 5. נורמליזציה
+        score = max(5, score)
 
         return {
             "score": round(score, 2),
-            "reasons": reasons,
-            "weights": self.learning.weights
+            "reasons": reasons
         }
