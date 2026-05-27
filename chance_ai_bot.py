@@ -1,116 +1,120 @@
 import os
-from telebot import TeleBot
+import time
+import requests
+import telebot
+from telebot import types
 
-from core.orchestrator import Orchestrator
+# ================== CONFIG ==================
 
-# =========================
-# 🔐 TOKEN (בטוח לפרודקשן)
-# =========================
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.getenv("TG_TOKEN")
 
 if not TOKEN:
-    raise ValueError("❌ BOT_TOKEN לא מוגדר ב-ENV (Railway / Render)")
+    raise Exception("Missing TG_TOKEN")
 
-bot = TeleBot(TOKEN)
+bot = telebot.TeleBot(TOKEN)
 
+print("🚀 CHANCE AI BOT STARTED")
 
-# =========================
-# 📦 נתונים (תחליף לפי Base44 שלך)
-# =========================
-def get_data(table_name, limit):
+# ================== SAFE START (ANTI 409) ==================
+
+def safe_start():
     """
-    ⚠️ זה placeholder בלבד
-    חבר כאן את Base44 / DB שלך
+    מנקה getUpdates ישנים כדי למנוע 409
     """
-    return []
+    try:
+        requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1")
+    except:
+        pass
 
+safe_start()
 
-# =========================
-# ⚡ חיזוי מהיר (Base44)
-# =========================
-@bot.message_handler(func=lambda m: m.text == "⚡ חיזוי מהיר")
-def quick_prediction(message):
+# ================== DATA ==================
 
-    data = get_data("Prediction", 4)
+def get_data():
+    # כאן אתה יכול לחבר Base44 אם צריך
+    return [
+        {
+            "draw": 52953,
+            "cards": ["♠️10", "♥️9", "♦️Q", "♣️K"]
+        }
+    ]
 
-    if not data:
-        bot.send_message(message.chat.id, "❌ אין נתוני Base44")
-        return
+# ================== KEYBOARD ==================
 
-    text = "⚡️ חיזוי מהיר (Base44)\n\n"
+def main_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    for i, p in enumerate(data, start=1):
+    markup.row("🎯 חיזוי הבא", "⚡ חיזוי מהיר")
+    markup.row("📊 סטטיסטיקות", "🔥 Hot Cards")
 
-        text += f"""
-🎯 חיזוי #{i}
+    return markup
 
-🎰 הגרלה יעד:
-#{p.get('target_draw_number', '')}
+# ================== START ==================
 
-♠️ {p.get('main_spade', '')}
-♥️ {p.get('main_heart', '')}
-♦️ {p.get('main_diamond', '')}
-♣️ {p.get('main_club', '')}
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.send_message(
+        message.chat.id,
+        "♣️ CHANCE AI BOT",
+        reply_markup=main_menu()
+    )
 
-🔥 חיזוקים:
-1) {p.get('reinforcement_1', '')}
-2) {p.get('reinforcement_2', '')}
+# ================== NEXT ==================
 
-────────────────────
-"""
-
-    bot.send_message(message.chat.id, text)
-
-
-# =========================
-# 🎯 חיזוי הבא (AI Engine)
-# =========================
 @bot.message_handler(func=lambda m: m.text == "🎯 חיזוי הבא")
 def next_prediction(message):
 
-    draws = get_data("History", 50)
-
-    if not draws:
-        bot.send_message(message.chat.id, "❌ אין היסטוריה לניתוח")
-        return
-
-    orchestrator = Orchestrator(draws)
-
-    result = orchestrator.predict()
-
-    prediction = result.get("prediction", {})
+    data = get_data()[0]
 
     text = f"""
-🎯 חיזוי הבא (AI Engine)
+🎯 חיזוי הבא
 
-🎰 הגרלה יעד:
-#{result.get('target_draw', '')}
+🎰 הגרלה #{data['draw']}
 
-♠️ {prediction.get('spade', '')}
-♥️ {prediction.get('heart', '')}
-♦️ {prediction.get('diamond', '')}
-♣️ {prediction.get('club', '')}
-
-📊 Score:
-{result.get('score', 0)}/100
-
-🧠 Confidence:
-{result.get('confidence', 0)}%
-
-⚠️ Risk:
-{result.get('confidence_level', '')}
-
-Why selected:
-{result.get('report', '')}
+{data['cards'][0]}
+{data['cards'][1]}
+{data['cards'][2]}
+{data['cards'][3]}
 """
 
     bot.send_message(message.chat.id, text)
 
+# ================== QUICK ==================
 
-# =========================
-# 🚀 הפעלה
-# =========================
-if __name__ == "__main__":
-    print("🚀 CHANCE AI BOT STARTED")
-    bot.infinity_polling(skip_pending=True)
-    
+@bot.message_handler(func=lambda m: m.text == "⚡ חיזוי מהיר")
+def quick_prediction(message):
+
+    data = get_data()
+
+    text = "⚡ חיזוי מהיר\n\n"
+
+    for i, d in enumerate(data):
+
+        text += f"""
+🎯 #{i+1} → #{d['draw']}
+{d['cards'][0]} {d['cards'][1]} {d['cards'][2]} {d['cards'][3]}
+
+----------------
+"""
+
+    bot.send_message(message.chat.id, text)
+
+# ================== FALLBACK ==================
+
+@bot.message_handler(func=lambda m: True)
+def fallback(message):
+    bot.send_message(message.chat.id, "בחר אפשרות מהתפריט")
+
+# ================== RUN (SAFE POLLING) ==================
+
+while True:
+    try:
+        bot.infinity_polling(
+            skip_pending=True,
+            timeout=20,
+            long_polling_timeout=20
+        )
+
+    except Exception as e:
+        print("BOT ERROR:", e)
+        time.sleep(3)
